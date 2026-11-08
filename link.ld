@@ -1,5 +1,9 @@
 /*
  * PIE ET_DYN @ 0x08000000 — same layout as cactsole (see CactLib libc.ld).
+ *
+ * The `.rela.*` names are the x86-64 ones; the `.rel.*` pair is kept so a
+ * relocatable built by an older toolchain still lands in a named section rather
+ * than an orphan one.
  */
 ENTRY(_start)
 
@@ -11,6 +15,8 @@ SECTIONS {
     .gnu.hash  : { *(.gnu.hash) }
     .dynsym    : { *(.dynsym) }
     .dynstr    : { *(.dynstr) }
+    .rela.dyn  : { *(.rela.dyn) }
+    .rela.plt  : { *(.rela.plt) }
     .rel.dyn   : { *(.rel.dyn) }
     .rel.plt   : { *(.rel.plt) }
 
@@ -23,6 +29,7 @@ SECTIONS {
     .eh_frame  : { *(.eh_frame) }
 
     . = ALIGN(0x1000);
+    .data.rel.ro : { *(.data.rel.ro .data.rel.ro.*) }
     .data      : { *(.data .data.*) }
     .got       : { *(.got) }
     .got.plt   : { *(.got.plt) }

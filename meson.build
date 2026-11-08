@@ -2,8 +2,8 @@
 # CactUserBins — Meson build system
 # ==============================================================================
 #
-#   meson setup build-meson --cross-file cross/i686-cact-clang.ini \
-#       -Dcactlib=../CactLibc-x86_32 -Dcactsoleinc=../Cactsole-x86_32/include
+#   meson setup build-meson --cross-file cross/x86_64-cact-clang.ini \
+#       -Dcactlib=../CactLibc-x86_64 -Dcactsoleinc=../Cactsole-x86_64/include
 #   ninja -C build-meson            # all tools
 #   ninja -C build-meson stage      # distribute into -Dlr_bin / -Dlr_sbin
 #   ninja -C build-meson host-fdisk host-mkfs.ext4 host-mkfs.fat32 host-cact-rootfs
@@ -184,7 +184,7 @@ foreach app : apps
 
   app_lib = static_library('app-' + app.underscorify(), sources, c_args: app_c_args)
 
-  link_cmd = [ld, '-m', 'elf_i386', '-pie', '--dynamic-linker=/lib/ld.so',
+  link_cmd = [ld, '-m', 'elf_x86_64', '-pie', '--dynamic-linker=/lib/ld.so',
               '--hash-style=both', '-nostdlib', '--gc-sections',
               '-T', src_root / 'link.ld', '-o', '@OUTPUT@',
               start_o,
@@ -231,10 +231,10 @@ run_target('stage',
 # exist in this checkout, so only the tools are built here.
 # ------------------------------------------------------------------------------
 
-host_c_args = ['-m32', '-O2', '-Wall', '-Wno-unused-function', '-Wno-unused-variable']
-# The objects are 32-bit (-m32 in host_c_args), so the link step needs -m32 too
-# or the native 64-bit linker rejects them.
-host_link_args = ['-m32']
+host_c_args = ['-m64', '-O2', '-Wall', '-Wno-unused-function', '-Wno-unused-variable']
+# These are build-machine binaries; on x86_64 the host and the target share one
+# architecture, so a plain -m64 native link is all the host tools need.
+host_link_args = ['-m64']
 
 executable('host-fdisk',
   files('fdisk/main.c', 'fdisk/ptab.c'),

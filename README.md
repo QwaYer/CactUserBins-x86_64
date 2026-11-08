@@ -1,7 +1,7 @@
-# 📦 CactUserBins/x86_32
+# 📦 CactUserBins/x86_64
 
 <p align="center">
-  <img src="https://img.shields.io/badge/arch-i686-red.svg?style=for-the-badge" alt="Arch: i686">
+  <img src="https://img.shields.io/badge/arch-x86_64-red.svg?style=for-the-badge" alt="Arch: x86_64">
   <img src="https://img.shields.io/badge/language-C-orange.svg?style=for-the-badge" alt="Language: C">
   <img src="https://img.shields.io/badge/link-PIE%20%2B%20clibc.so-purple.svg?style=for-the-badge" alt="PIE + clibc.so">
   <img src="https://img.shields.io/badge/layout-one%20ELF%20per%20tool-blue.svg?style=for-the-badge" alt="One ELF per tool">
@@ -11,7 +11,11 @@
 
 <p align="center">
   A <strong>userspace tool suite</strong> for <strong>Cact OS</strong>: one <strong>small PIE ELF</strong> per command, shared implementations in <strong><code>common/</code></strong>, linked with <strong><code>clibc.so</code></strong> from <strong>CactLib</strong>.<br>
-  Built artefacts land under <strong><code>build-meson/</code></strong>; <strong><code>ninja -C build-meson stage</code></strong> distributes them into <strong><code>LocalRepoCactOS-x86_32/lib/bin</code></strong> and <strong><code>lib/sbin</code></strong> for <strong>cctkfs</strong> packing.
+  Built artefacts land under <strong><code>build-meson/</code></strong>; <strong><code>ninja -C build-meson stage</code></strong> distributes them into <strong><code>LocalRepoCactOS-x86_64/lib/bin</code></strong> and <strong><code>lib/sbin</code></strong> for <strong>cctkfs</strong> packing.
+</p>
+
+<p align="center">
+  Fork of <a href="https://github.com/QwaYer/CactUserBins-x86_32"><strong>CactUserBins-x86_32</strong></a> 2.0.0 — the x86_64 port; the plan is <a href="PORTING-x86_64.md"><code>PORTING-x86_64.md</code></a>.
 </p>
 
 ---
@@ -32,11 +36,11 @@
 
 | Component | Role |
 |-----------|------|
-| **[CactLib-x86_32](https://github.com/QwaYer/CactLibc-x86_32)** | **`clibc.so`** + **`build-meson/start.o`** — required for every link line |
-| **[Cactsole-x86_32](https://github.com/QwaYer/Cactsole-x86_32)** | Interactive shell; it does **not** describe these tools — **`help <tool>`** runs the tool with **`--help`** and each tool documents itself |
-| **[LocalRepoCactOS-x86_32](../LocalRepoCactOS-x86_32)** | **`ninja -C build-meson stage`** fills **`lib/bin/`** and **`lib/sbin/`** here before **`cctkfs.img`** is packed |
-| **[CactOS-x86_32](https://github.com/QwaYer/CactOS-x86_32)** | **Workspace integrator** — sets **`CACTLIB`**, **`CACTSOLEINC`**, **`LR_*`**, then **`LocalRepo`** + **kernel** + **CactBridge** |
-| **[CactKernel-x86_32](https://github.com/QwaYer/CactKernel-x86_32)** | **binfs** / **sbinfs** overlay **`/usr/bin/*`** and **`/usr/sbin/*`** from the **cctkfs** module (reached through the **`/bin`** and **`/sbin`** symlinks) on top of disk-backed FS |
+| **[CactLib-x86_64](https://github.com/QwaYer/CactLibc-x86_64)** | **`clibc.so`** + **`build-meson/start.o`** — required for every link line |
+| **[Cactsole-x86_64](https://github.com/QwaYer/Cactsole-x86_64)** | Interactive shell; it does **not** describe these tools — **`help <tool>`** runs the tool with **`--help`** and each tool documents itself |
+| **[LocalRepoCactOS-x86_64](../LocalRepoCactOS-x86_64)** | **`ninja -C build-meson stage`** fills **`lib/bin/`** and **`lib/sbin/`** here before **`cctkfs.img`** is packed |
+| **[CactOS-x86_64](https://github.com/QwaYer/CactOS-x86_64)** | **Workspace integrator** — sets **`CACTLIB`**, **`CACTSOLEINC`**, **`LR_*`**, then **`LocalRepo`** + **kernel** + **CactBridge** |
+| **[CactKernel-x86_64](https://github.com/QwaYer/CactKernel-x86_64)** | **binfs** / **sbinfs** overlay **`/usr/bin/*`** and **`/usr/sbin/*`** from the **cctkfs** module (reached through the **`/bin`** and **`/sbin`** symlinks) on top of disk-backed FS |
 
 ---
 
@@ -44,13 +48,13 @@
 
 **Recommended — full workspace**
 
-**[CactOS-x86_32](https://github.com/QwaYer/CactOS-x86_32)** configures this project with **`-Dcactlib`**, **`-Dcactsoleinc`**, **`-Dlr_bin`**, **`-Dlr_sbin`** and runs its **`stage`** target.
+**[CactOS-x86_64](https://github.com/QwaYer/CactOS-x86_64)** configures this project with **`-Dcactlib`**, **`-Dcactsoleinc`**, **`-Dlr_bin`**, **`-Dlr_sbin`** and runs its **`stage`** target.
 
 **Standalone — this repository**
 
 ```sh
-meson setup build-meson --cross-file cross/i686-cact-clang.ini \
-    -Dcactlib=../CactLibc-x86_32 -Dcactsoleinc=../Cactsole-x86_32/include
+meson setup build-meson --cross-file cross/x86_64-cact-clang.ini \
+    -Dcactlib=../CactLibc-x86_64 -Dcactsoleinc=../Cactsole-x86_64/include
 ninja -C build-meson        # every tool
 ninja -C build-meson stage  # copy ELFs into -Dlr_bin / -Dlr_sbin
 ninja -C build-meson clean
@@ -63,7 +67,7 @@ Override any path if needed: `meson configure build-meson -Dcactlib=/custom/path
 ## 📂 Repository layout
 
 ```
-CactUserBins-x86_32/
+CactUserBins-x86_64/
 ├── meson.build           # apps list, bin/sbin split, stage target
 ├── link.ld               # PIE @ 0x08000000
 ├── common/
