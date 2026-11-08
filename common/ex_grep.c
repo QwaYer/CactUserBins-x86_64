@@ -1,0 +1,366 @@
+/*
+ * ex_grep.c — grep: searching for text in files/directories.
+ *
+ *   grep [-i] [-n] [-v] [-c] [-l] [-r] PATTERN [FILE...]
+ *
+ * The pattern is a simple substring (no regular expressions).  With several
+ * files (or -r) the output is prefixed with the file name; without files
+ * stdin is read.  Return: 0 — found, 1 — not found, 2 — error.
+ */
+
+#include "common/ex_util.h"
+
+#include <unistd.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <fcntl.h>
+#include <stat.h>
+#include <dirent.h>
+#include <stdint.h>
+
+typedef struct {
+    int icase;
+    int lineno;
+    int invert;
+    int count;
+    int list_only;
+    int recurse;
+    int quiet;
+    int word;
+    const char *pat;
+    int patlen;
+} grep_opt_t;
+
+typedef struct {
+    unsigned char *b;
+    int cap;
+    int len;
+} gline_t;
+
+static int g_low(int c) {
+    if (c >= 'A' && c <= 'Z') return c + ('a' - 'A');
+    return c;
+}
+
+static int g_isword(unsigned char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+           (c >= '0' && c <= '9') || c == '_';
+}
+
+static int g_match(const unsigned char *h, int hl,
+                   const unsigned char *n, int nl, int icase, int word) {
+    if (nl == 0) return 1;
+    if (nl > hl) return 0;
+    for (int i = 0; i <= hl - nl; i++) {
+        int ok = 1;
+        for (int j = 0; j < nl; j++) {
+            unsigned char hc = h[i + j];
+            if (icase ? (g_low(hc) != g_low(n[j])) : (hc != n[j])) { ok = 0; break; }
+        }
+        if (!ok) continue;
+        if (word) {
+            if (i > 0 && g_isword(h[i - 1])) continue;
+            if (i + nl < hl && g_isword(h[i + nl])) continue;
+        }
+        return 1;
+    }
+    return 0;
+}
+
+static void g_write_str(int fd, const char *s) {
+    write(fd, s, strlen(s));
+}
+
+static void g_write_num(int fd, unsigned long v) {
+    char buf[24];
+    int n = 0;
+    if (v == 0) { write(fd, "0", 1); return; }
+    while (v > 0) {
+        buf[n++] = (char)('0' + (v % 10));
+        v /= 10;
+    }
+    while (n > 0) write(fd, &buf[--n], 1);
+}
+
+static void g_print_line(const grep_opt_t *o, int out, const char *path,
+                         int show_name, unsigned long ln,
+                         const unsigned char *line, int len) {
+    if (show_name) {
+        g_write_str(out, path);
+        write(out, ":", 1);
+    }
+    if (o->lineno) {
+        g_write_num(out, ln);
+        write(out, ":", 1);
+    }
+    if (len > 0) write(out, line, (size_t)len);
+    write(out, "\n", 1);
+}
+
+/* Process one open fd. limit>0 — read no more than limit bytes
+ * (regular files: their size from stat), limit==0 — read to EOF (stdin,
+ * pseudo-files). Returns 0 = matches found, 1 = none, 2 = error. */
+static int g_run_fd(int fd, const grep_opt_t *o, const char *path,
+                    int show_name, unsigned long long limit) {
+    gline_t L;
+    L.b = (unsigned char *)malloc(128);
+    if (!L.b) return 2;
+    L.cap = 128;
+    L.len = 0;
+
+    unsigned long ln = 0, cnt = 0;
+    int stop = 0, any = 0;
+    int rc = 1;
+    unsigned long long got = 0;
+
+    unsigned char chunk[4096];
+    for (;;) {
+        unsigned long long want = sizeof(chunk);
+        if (limit > 0 && limit - got < want) want = limit - got;
+        ssize_t r = read(fd, chunk, (size_t)want);
+        if (r < 0) { rc = 2; break; }
+        if (r == 0) break;
+        got += (unsigned long long)r;
+        for (ssize_t i = 0; i < r; i++) {
+            unsigned char c = chunk[i];
+            if (c == '\n') {
+                ln++;
+                int m = g_match(L.b, L.len,
+                                (const unsigned char *)o->pat, o->patlen,
+                                o->icase, o->word);
+                if (o->invert) m = !m;
+                if (m) {
+                    cnt++;
+                    any = 1;
+                    if (o->quiet) {
+                        stop = 1;
+                    } else if (o->count || o->list_only) {
+                        /* counted/list — print at the end/right away */
+                        if (o->list_only && !stop) {
+                            if (path && path[0]) {
+                                g_write_str(STDOUT_FILENO, path);
+                                write(STDOUT_FILENO, "\n", 1);
+                            }
+                            stop = 1;
+                        }
+                    } else {
+                        g_print_line(o, STDOUT_FILENO, path, show_name,
+                                     ln, L.b, L.len);
+                    }
+                }
+                L.len = 0;
+            } else {
+                if (L.len + 1 >= L.cap) {
+                    int ncap = L.cap * 2;
+                    unsigned char *nb = (unsigned char *)realloc(L.b,
+                                                                 (size_t)ncap);
+                    if (!nb) {
+                        free(L.b);
+                        return 2;
+                    }
+                    L.b = nb;
+                    L.cap = ncap;
+                }
+                L.b[L.len++] = c;
+            }
+        }
+        if (limit > 0 && got >= limit) break;
+        if (stop) break;
+    }
+
+    if (!stop && L.len > 0) {
+        /* last line without a line feed */
+        ln++;
+        int m = g_match(L.b, L.len,
+                        (const unsigned char *)o->pat, o->patlen,
+                        o->icase, o->word);
+        if (o->invert) m = !m;
+        if (m) {
+            cnt++;
+            any = 1;
+            if (o->quiet) {
+                /* nothing to print */
+            } else if (o->count || o->list_only) {
+                if (o->list_only && path && path[0]) {
+                    g_write_str(STDOUT_FILENO, path);
+                    write(STDOUT_FILENO, "\n", 1);
+                }
+            } else {
+                g_print_line(o, STDOUT_FILENO, path, show_name,
+                             ln, L.b, L.len);
+            }
+        }
+    }
+    free(L.b);
+
+    if (rc == 2) return 2;
+
+    if (o->count) {
+        if (show_name) {
+            g_write_str(STDOUT_FILENO, path);
+            write(STDOUT_FILENO, ":", 1);
+        }
+        g_write_num(STDOUT_FILENO, cnt);
+        write(STDOUT_FILENO, "\n", 1);
+    }
+    return any ? 0 : 1;
+}
+
+static int g_process_file(const char *path, const grep_opt_t *o,
+                          int show_name) {
+    int fd = open(path, O_RDONLY, 0);
+    if (fd < 0) {
+        fprintf(stderr, "grep: %s: cannot open\n", path);
+        return 2;
+    }
+    int rc;
+    struct stat st;
+    /* Read exactly st_size bytes when it is known and non-zero, so an FS driver
+     * that does not report EOF cannot make us wait forever.  st_size 0 means
+     * "unknown" (procfs virtual files report 0), so read those to EOF. */
+    if (fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0)
+        rc = g_run_fd(fd, o, path, show_name, (unsigned long long)st.st_size);
+    else
+        rc = g_run_fd(fd, o, path, show_name, 0);
+    close(fd);
+    return rc;
+}
+
+typedef struct {
+    const grep_opt_t *o;
+    int any;   /* 0 = nothing matched, 1 = matched, 2 = error */
+} g_walk_t;
+
+static int g_walk_tree(const char *path, const grep_opt_t *o);
+
+static int g_process_path(const char *path, const grep_opt_t *o, int depth,
+                          int show_name) {
+    struct stat st;
+    /* A symlink named on the command line is followed (as GNU grep -r does);
+     * one met while descending a tree is not, so a link to a directory is not
+     * walked a second time from inside. */
+    int ok = (depth == 0) ? (stat(path, &st) == 0) : (lstat(path, &st) == 0);
+    if (!ok) {
+        fprintf(stderr, "grep: %s: not found\n", path);
+        return 2;
+    }
+    if (S_ISDIR(st.st_mode)) {
+        if (!o->recurse) {
+            fprintf(stderr, "grep: %s: is a directory (use -r)\n", path);
+            return 2;
+        }
+        return g_walk_tree(path, o);
+    }
+    if (!S_ISREG(st.st_mode)) return 0;
+    return g_process_file(path, o, show_name);
+}
+
+/* One regular file found by the recursive walk — directories are descended by
+ * the walker itself, and links are skipped (GNU grep -r follows only ones named
+ * on the command line). */
+static int g_walk_enter(const char *full, const char *name, int depth, int is_last,
+                        const struct stat *st, void *ud) {
+    g_walk_t *g = (g_walk_t *)ud;
+    int r;
+    (void)name; (void)depth; (void)is_last;
+    if (!S_ISREG(st->st_mode)) return 0;
+    r = g_process_file(full, g->o, 1);
+    if (r == 0) g->any = 1;
+    else if (r == 2) g->any = 2;
+    return 0;
+}
+
+/* Recursive grep of one directory: iterative (cact_ub_tree_walk), so nesting
+ * depth costs heap rather than the 16 KiB user stack. */
+static int g_walk_tree(const char *path, const grep_opt_t *o) {
+    g_walk_t g;
+    cact_ub_walk_opts_t opts;
+    g.o   = o;
+    g.any = 0;
+    opts.max_depth = -1;
+    opts.sel       = NULL;
+    opts.sort      = 1;
+    (void)cact_ub_tree_walk(path, 0, &opts, g_walk_enter, NULL, &g);
+    return g.any;
+}
+
+static void grep_usage(void) {
+    fprintf(stderr,
+            "usage: grep [-i] [-n] [-v] [-c] [-l] [-q] [-w] [-r] PATTERN [FILE...]\n"
+            "  PATTERN is a plain substring (no regexes)\n"
+            "  -i ignore case, -n line numbers, -v invert match\n"
+            "  -c print count, -l list files with matches, -r recurse dirs\n"
+            "  -q quiet (exit status only), -w match whole words\n");
+}
+
+int cact_ub_grep(char **argv, int argc) {
+    grep_opt_t o;
+    memset(&o, 0, sizeof(o));
+    int pat_idx = -1;
+    int file_count = 0;
+    const char *files[64];
+    int options_done = 0;
+
+    for (int i = 1; i < argc; i++) {
+        const char *a = argv[i];
+        if (!options_done && a[0] == '-' && a[1]) {
+            if (strcmp(a, "--") == 0) {
+                options_done = 1;
+                continue;
+            }
+            if (strcmp(a, "--help") == 0 || strcmp(a, "-h") == 0) {
+                grep_usage();
+                return 0;
+            }
+            for (const char *p = a + 1; *p; p++) {
+                switch (*p) {
+                    case 'i': o.icase = 1; break;
+                    case 'n': o.lineno = 1; break;
+                    case 'v': o.invert = 1; break;
+                    case 'c': o.count = 1; break;
+                    case 'l': o.list_only = 1; break;
+                    case 'r': o.recurse = 1; break;
+                    case 'q': o.quiet = 1; break;
+                    case 'w': o.word = 1; break;
+                    case 'F': break;   /* fixed strings are the only mode */
+                    default:
+                        fprintf(stderr, "grep: unknown option -%c\n", *p);
+                        grep_usage();
+                        return 2;
+                }
+            }
+            continue;
+        }
+        if (pat_idx < 0) {
+            pat_idx = i;
+        } else if (file_count < (int)(sizeof(files) / sizeof(files[0]))) {
+            files[file_count++] = a;
+        }
+    }
+
+    if (pat_idx < 0) {
+        grep_usage();
+        return 2;
+    }
+
+    o.pat = argv[pat_idx];
+    o.patlen = (int)strlen(o.pat);
+
+    int show_name = (file_count > 1) || o.recurse;
+
+    if (file_count == 0) {
+        int r = g_run_fd(STDIN_FILENO, &o, NULL, 0, 0);
+        return r;
+    }
+
+    int found = 0, err = 0;
+    for (int i = 0; i < file_count; i++) {
+        int r = g_process_path(files[i], &o, 0, show_name);
+        if (r == 0) found = 1;
+        else if (r == 2) err = 1;
+    }
+    if (err) return 2;
+    if (found) return 0;
+    return 1;
+}
