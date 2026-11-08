@@ -1,5 +1,5 @@
 /*
- * ldd — print the shared-object dependencies of an ELF32/i386 program.
+ * ldd — print the shared-object dependencies of an ELF64/x86_64 program.
  *
  * Unlike glibc's ldd this is a pure reader: it never executes the target and
  * never lets ld.so map it.  It parses the ELF program/dynamic headers itself,
@@ -29,16 +29,16 @@
 #define CACTSOLE_VERSION "unknown"
 #endif
 
-/* ── ELF32 structures (no <elf.h> in the freestanding headers) ───────────── */
+/* ── ELF64 structures (no <elf.h> in the freestanding headers) ───────────── */
 
 typedef struct {
     unsigned char e_ident[16];
     uint16_t e_type;
     uint16_t e_machine;
     uint32_t e_version;
-    uint32_t e_entry;
-    uint32_t e_phoff;
-    uint32_t e_shoff;
+    uint64_t e_entry;
+    uint64_t e_phoff;
+    uint64_t e_shoff;
     uint32_t e_flags;
     uint16_t e_ehsize;
     uint16_t e_phentsize;
@@ -46,46 +46,46 @@ typedef struct {
     uint16_t e_shentsize;
     uint16_t e_shnum;
     uint16_t e_shstrndx;
-} Elf32_Ehdr;
+} Elf64_Ehdr;
 
 typedef struct {
     uint32_t p_type;
-    uint32_t p_offset;
-    uint32_t p_vaddr;
-    uint32_t p_paddr;
-    uint32_t p_filesz;
-    uint32_t p_memsz;
     uint32_t p_flags;
-    uint32_t p_align;
-} Elf32_Phdr;
+    uint64_t p_offset;
+    uint64_t p_vaddr;
+    uint64_t p_paddr;
+    uint64_t p_filesz;
+    uint64_t p_memsz;
+    uint64_t p_align;
+} Elf64_Phdr;
 
 typedef struct {
-    int32_t  d_tag;
+    int64_t  d_tag;
     union {
-        uint32_t d_val;
-        uint32_t d_ptr;
+        uint64_t d_val;
+        uint64_t d_ptr;
     } d_un;
-} Elf32_Dyn;
+} Elf64_Dyn;
 
 typedef struct {
     uint32_t st_name;
-    uint32_t st_value;
-    uint32_t st_size;
     uint8_t  st_info;
     uint8_t  st_other;
     uint16_t st_shndx;
-} Elf32_Sym;
+    uint64_t st_value;
+    uint64_t st_size;
+} Elf64_Sym;
 
 typedef struct {
-    uint32_t r_offset;
-    uint32_t r_info;
-} Elf32_Rel;
+    uint64_t r_offset;
+    uint64_t r_info;
+} Elf64_Rel;
 
 typedef struct {
-    uint32_t r_offset;
-    uint32_t r_info;
-    int32_t  r_addend;
-} Elf32_Rela;
+    uint64_t r_offset;
+    uint64_t r_info;
+    int64_t  r_addend;
+} Elf64_Rela;
 
 typedef struct {
     uint16_t vn_version;
@@ -93,7 +93,7 @@ typedef struct {
     uint32_t vn_file;
     uint32_t vn_aux;
     uint32_t vn_next;
-} Elf32_Verneed;
+} Elf64_Verneed;
 
 typedef struct {
     uint32_t vna_hash;
@@ -101,11 +101,11 @@ typedef struct {
     uint16_t vna_other;
     uint32_t vna_name;
     uint32_t vna_next;
-} Elf32_Vernaux;
+} Elf64_Vernaux;
 
-#define ELFCLASS32    1
+#define ELFCLASS64    2
 #define ELFDATA2LSB   1
-#define EM_386        3
+#define EM_X86_64     62
 
 #define PT_LOAD       1
 #define PT_DYNAMIC    2
@@ -130,16 +130,16 @@ typedef struct {
 #define DT_VERNEEDNUM 0x6fffffff
 #define DT_GNU_HASH   0x6ffffef5
 
-#define R_386_NONE     0
-#define R_386_RELATIVE 8
+#define R_X86_64_NONE     0
+#define R_X86_64_RELATIVE 8
 
 #define SHN_UNDEF     0
 #define STB_GLOBAL    1
 #define STB_WEAK      2
 
-#define ELF32_ST_BIND(i)  ((i) >> 4)
-#define ELF32_R_SYM(i)    ((i) >> 8)
-#define ELF32_R_TYPE(i)   ((uint8_t)(i))
+#define ELF64_ST_BIND(i)  ((i) >> 4)
+#define ELF64_R_SYM(i)    ((i) >> 32)
+#define ELF64_R_TYPE(i)   ((uint32_t)(i))
 
 /* ── object table ───────────────────────────────────────────────────────── */
 
@@ -153,24 +153,25 @@ typedef struct {
     uint8_t  *img;          /* raw file image */
     uint32_t  size;
 
-    uint32_t  phoff, phnum, phent;
-    uint32_t  base;         /* lowest PT_LOAD vaddr */
+    uint64_t  phoff;
+    uint16_t  phnum, phent;
+    uint64_t  base;         /* lowest PT_LOAD vaddr */
     int       found;
     int       is_main;
     int       has_dynamic;
     int       has_interp;
 
-    uint32_t  dyn_vaddr, dyn_size;
-    uint32_t  interp_off, interp_size;
+    uint64_t  dyn_vaddr, dyn_size;
+    uint64_t  interp_off, interp_size;
 
-    uint32_t  symtab, strtab, strsz, symcount;
-    uint32_t  hash, gnu_hash;
-    uint32_t  rel, relsz, relent;
-    uint32_t  rela, relasz, relaent;
-    uint32_t  jmprel, jmprelsz, pltrel;
-    uint32_t  verneed, verneednum;
+    uint64_t  symtab, strtab, strsz, symcount;
+    uint64_t  hash, gnu_hash;
+    uint64_t  rel, relsz, relent;
+    uint64_t  rela, relasz, relaent;
+    uint64_t  jmprel, jmprelsz, pltrel;
+    uint64_t  verneed, verneednum;
 
-    uint32_t  needed[LDD_MAX_NEEDED];
+    uint64_t  needed[LDD_MAX_NEEDED];
     int       dep[LDD_MAX_NEEDED];
     int       nneeded;
 } ldd_obj;
@@ -221,12 +222,12 @@ static uint8_t *ldd_read(const char *path, uint32_t *size_out)
 
 /* Map a virtual address to the raw file image, requiring `len` bytes inside
  * one PT_LOAD file range.  Returns NULL when out of range. */
-static void *obj_vaddr(const ldd_obj *o, uint32_t vaddr, uint32_t len)
+static void *obj_vaddr(const ldd_obj *o, uint64_t vaddr, uint64_t len)
 {
     uint32_t i;
     for (i = 0; i < o->phnum; i++) {
-        const Elf32_Phdr *ph =
-            (const Elf32_Phdr *)(o->img + o->phoff + i * o->phent);
+        const Elf64_Phdr *ph =
+            (const Elf64_Phdr *)(o->img + o->phoff + i * o->phent);
         if (ph->p_type != PT_LOAD) continue;
         if (vaddr < ph->p_vaddr) continue;
         if (vaddr - ph->p_vaddr + len > ph->p_filesz) continue;
@@ -235,49 +236,50 @@ static void *obj_vaddr(const ldd_obj *o, uint32_t vaddr, uint32_t len)
     return NULL;
 }
 
-static const char *obj_str(const ldd_obj *o, uint32_t off)
+static const char *obj_str(const ldd_obj *o, uint64_t off)
 {
     if (!o->strtab || off >= o->strsz) return NULL;
     return (const char *)obj_vaddr(o, o->strtab + off, 1);
 }
 
-static const Elf32_Sym *obj_sym(const ldd_obj *o, uint32_t idx)
+static const Elf64_Sym *obj_sym(const ldd_obj *o, uint64_t idx)
 {
     if (!o->symtab) return NULL;
-    return (const Elf32_Sym *)obj_vaddr(o,
-        o->symtab + idx * (uint32_t)sizeof(Elf32_Sym),
-        (uint32_t)sizeof(Elf32_Sym));
+    return (const Elf64_Sym *)obj_vaddr(o,
+        o->symtab + idx * (uint64_t)sizeof(Elf64_Sym),
+        (uint64_t)sizeof(Elf64_Sym));
 }
 
 static int elf_check(const ldd_obj *o)
 {
-    const Elf32_Ehdr *eh;
-    if (!o->img || o->size < sizeof(Elf32_Ehdr)) return 0;
-    eh = (const Elf32_Ehdr *)o->img;
+    const Elf64_Ehdr *eh;
+    if (!o->img || o->size < sizeof(Elf64_Ehdr)) return 0;
+    eh = (const Elf64_Ehdr *)o->img;
     if (eh->e_ident[0] != 0x7f || eh->e_ident[1] != 'E' ||
         eh->e_ident[2] != 'L'  || eh->e_ident[3] != 'F') return 0;
-    if (eh->e_ident[4] != ELFCLASS32 || eh->e_ident[5] != ELFDATA2LSB) return 0;
-    if (eh->e_machine != EM_386) return 0;
-    if (eh->e_phnum == 0 || eh->e_phentsize < sizeof(Elf32_Phdr)) return 0;
+    if (eh->e_ident[4] != ELFCLASS64 || eh->e_ident[5] != ELFDATA2LSB) return 0;
+    if (eh->e_machine != EM_X86_64) return 0;
+    if (eh->e_phnum == 0 || eh->e_phentsize < sizeof(Elf64_Phdr)) return 0;
     if (eh->e_phoff > o->size) return 0;
-    if ((uint32_t)eh->e_phnum * (uint32_t)eh->e_phentsize > o->size - eh->e_phoff)
+    if ((uint64_t)eh->e_phnum * (uint64_t)eh->e_phentsize >
+        (uint64_t)o->size - eh->e_phoff)
         return 0;
     return 1;
 }
 
 static void obj_scan_ph(ldd_obj *o)
 {
-    const Elf32_Ehdr *eh = (const Elf32_Ehdr *)o->img;
+    const Elf64_Ehdr *eh = (const Elf64_Ehdr *)o->img;
     uint32_t i;
 
     o->phoff = eh->e_phoff;
     o->phnum = eh->e_phnum;
     o->phent = eh->e_phentsize;
-    o->base  = 0xFFFFFFFFu;
+    o->base  = 0xFFFFFFFFFFFFFFFFull;
 
     for (i = 0; i < o->phnum; i++) {
-        const Elf32_Phdr *ph =
-            (const Elf32_Phdr *)(o->img + o->phoff + i * o->phent);
+        const Elf64_Phdr *ph =
+            (const Elf64_Phdr *)(o->img + o->phoff + i * o->phent);
         if (ph->p_type == PT_LOAD) {
             if (ph->p_vaddr < o->base) o->base = ph->p_vaddr;
         } else if (ph->p_type == PT_DYNAMIC) {
@@ -290,11 +292,11 @@ static void obj_scan_ph(ldd_obj *o)
             o->has_interp  = 1;
         }
     }
-    if (o->base == 0xFFFFFFFFu) o->base = 0;
+    if (o->base == 0xFFFFFFFFFFFFFFFFull) o->base = 0;
 }
 
 /* Symbol count from SYSV/GNU hash; without either, walk until PT_LOAD ends. */
-static uint32_t obj_symcount(const ldd_obj *o)
+static uint64_t obj_symcount(const ldd_obj *o)
 {
     if (!o->symtab) return 0;
 
@@ -329,7 +331,7 @@ static uint32_t obj_symcount(const ldd_obj *o)
         }
     }
     {
-        uint32_t n = 0;
+        uint64_t n = 0;
         while (n < 65536 && obj_sym(o, n)) n++;
         return n;
     }
@@ -337,16 +339,16 @@ static uint32_t obj_symcount(const ldd_obj *o)
 
 static void obj_parse_dynamic(ldd_obj *o)
 {
-    const Elf32_Dyn *dyn;
-    uint32_t n, i;
+    const Elf64_Dyn *dyn;
+    uint64_t n, i;
 
     if (!o->has_dynamic) return;
-    dyn = (const Elf32_Dyn *)obj_vaddr(o, o->dyn_vaddr, o->dyn_size);
+    dyn = (const Elf64_Dyn *)obj_vaddr(o, o->dyn_vaddr, o->dyn_size);
     if (!dyn) { o->has_dynamic = 0; return; }
 
-    n = o->dyn_size / (uint32_t)sizeof(Elf32_Dyn);
+    n = o->dyn_size / (uint64_t)sizeof(Elf64_Dyn);
     for (i = 0; i < n; i++) {
-        const Elf32_Dyn *d = &dyn[i];
+        const Elf64_Dyn *d = &dyn[i];
         if (d->d_tag == DT_NULL) break;
         switch (d->d_tag) {
         case DT_NEEDED:
@@ -381,7 +383,7 @@ static void obj_parse(ldd_obj *o)
     obj_parse_dynamic(o);
 }
 
-static int obj_peek_base(const char *path, uint32_t *base_out)
+static int obj_peek_base(const char *path, uint64_t *base_out)
 {
     uint32_t size;
     uint8_t *img = ldd_read(path, &size);
@@ -394,7 +396,7 @@ static int obj_peek_base(const char *path, uint32_t *base_out)
     tmp.size = size;
     if (elf_check(&tmp)) {
         obj_scan_ph(&tmp);
-        *base_out = tmp.base & ~0xFFFu;
+        *base_out = tmp.base & ~0xFFFull;
         ok = 1;
     }
     free(img);
@@ -519,14 +521,14 @@ static int ldd_lookup_symbol(const char *name)
     int i;
     for (i = 0; i < g_nobj; i++) {
         ldd_obj *o = &g_obj[i];
-        uint32_t j;
+        uint64_t j;
         if (!o->found || !o->symtab || !o->strtab) continue;
         for (j = 1; j < o->symcount; j++) {
-            const Elf32_Sym *s = obj_sym(o, j);
+            const Elf64_Sym *s = obj_sym(o, j);
             const char *sn;
             int bind;
             if (!s || s->st_shndx == SHN_UNDEF || s->st_value == 0) continue;
-            bind = ELF32_ST_BIND(s->st_info);
+            bind = ELF64_ST_BIND(s->st_info);
             if (bind != STB_GLOBAL && bind != STB_WEAK) continue;
             sn = obj_str(o, s->st_name);
             if (sn && strcmp(sn, name) == 0) return i;
@@ -537,29 +539,30 @@ static int ldd_lookup_symbol(const char *name)
 
 /* ── relocations (-d / -r) and unused deps (-u) ─────────────────────────── */
 
-static void reloc_scan(const ldd_obj *o, uint32_t addr, uint32_t size,
-                       uint32_t ent, int rela, int *used)
+static void reloc_scan(const ldd_obj *o, uint64_t addr, uint64_t size,
+                       uint64_t ent, int rela, int *used)
 {
-    uint32_t n, i;
+    uint64_t n, i;
 
     if (!addr || !size) return;
-    if (ent != sizeof(Elf32_Rel) && ent != sizeof(Elf32_Rela))
-        ent = rela ? (uint32_t)sizeof(Elf32_Rela) : (uint32_t)sizeof(Elf32_Rel);
+    if (ent != sizeof(Elf64_Rel) && ent != sizeof(Elf64_Rela))
+        ent = rela ? (uint64_t)sizeof(Elf64_Rela) : (uint64_t)sizeof(Elf64_Rel);
     n = size / ent;
 
     for (i = 0; i < n; i++) {
         const void *r = obj_vaddr(o, addr + i * ent, ent);
-        uint32_t info, symi;
-        uint8_t  type;
-        const Elf32_Sym *s;
+        uint64_t info;
+        uint32_t symi, type;
+        const Elf64_Sym *s;
         const char *name;
 
         if (!r) break;
-        info = rela ? ((const Elf32_Rela *)r)->r_info
-                    : ((const Elf32_Rel *)r)->r_info;
-        type = ELF32_R_TYPE(info);
-        symi = ELF32_R_SYM(info);
-        if (type == R_386_NONE || type == R_386_RELATIVE || symi == 0) continue;
+        info = rela ? ((const Elf64_Rela *)r)->r_info
+                    : ((const Elf64_Rel *)r)->r_info;
+        type = ELF64_R_TYPE(info);
+        symi = (uint32_t)ELF64_R_SYM(info);
+        if (type == R_X86_64_NONE || type == R_X86_64_RELATIVE || symi == 0)
+            continue;
 
         s = obj_sym(o, symi);
         if (!s || s->st_shndx != SHN_UNDEF) continue;
@@ -582,13 +585,13 @@ static void reloc_scan_object(const ldd_obj *o, int func, int *used)
 {
     if (!o->found || !o->symtab) return;
     reloc_scan(o, o->rel, o->relsz,
-               o->relent ? o->relent : (uint32_t)sizeof(Elf32_Rel), 0, used);
+               o->relent ? o->relent : (uint64_t)sizeof(Elf64_Rel), 0, used);
     reloc_scan(o, o->rela, o->relasz,
-               o->relaent ? o->relaent : (uint32_t)sizeof(Elf32_Rela), 1, used);
+               o->relaent ? o->relaent : (uint64_t)sizeof(Elf64_Rela), 1, used);
     if (func && o->jmprel && o->jmprelsz) {
         int is_rela = (o->pltrel == DT_RELA);
         reloc_scan(o, o->jmprel, o->jmprelsz,
-                   is_rela ? (uint32_t)sizeof(Elf32_Rela) : (uint32_t)sizeof(Elf32_Rel),
+                   is_rela ? (uint64_t)sizeof(Elf64_Rela) : (uint64_t)sizeof(Elf64_Rel),
                    is_rela, used);
     }
 }
@@ -634,7 +637,7 @@ static void print_version_info(void)
         uint32_t off, cnt, limit;
 
         if (!o->found || !o->verneed) continue;
-        vn = (uint8_t *)obj_vaddr(o, o->verneed, (uint32_t)sizeof(Elf32_Verneed));
+        vn = (uint8_t *)obj_vaddr(o, o->verneed, (uint64_t)sizeof(Elf64_Verneed));
         if (!vn) continue;
 
         if (!header) {
@@ -643,21 +646,21 @@ static void print_version_info(void)
         }
         printf("\t%s:\n", o->path ? o->path : o->name);
 
-        limit = o->verneednum ? o->verneednum : 1;
+        limit = o->verneednum ? (uint32_t)o->verneednum : 1;
         off = 0;
         for (cnt = 0; cnt < limit && cnt < 64; cnt++) {
-            Elf32_Verneed *need = (Elf32_Verneed *)(vn + off);
+            Elf64_Verneed *need = (Elf64_Verneed *)(vn + off);
             const char *lib = obj_str(o, need->vn_file);
             uint32_t aoff = need->vn_aux, k;
 
             for (k = 0; k < need->vn_cnt && k < 64 && aoff; k++) {
-                Elf32_Vernaux *aux;
+                Elf64_Vernaux *aux;
                 const char *ver;
                 char rpath[LDD_PATH_MAX];
 
                 if (!obj_vaddr(o, o->verneed + off + aoff,
-                               (uint32_t)sizeof(Elf32_Vernaux))) break;
-                aux = (Elf32_Vernaux *)((uint8_t *)need + aoff);
+                               (uint64_t)sizeof(Elf64_Vernaux))) break;
+                aux = (Elf64_Vernaux *)((uint8_t *)need + aoff);
                 ver = obj_str(o, aux->vna_name);
                 if (lib && ver) {
                     if (ldd_find_library(lib, rpath, sizeof(rpath)))
@@ -670,7 +673,7 @@ static void print_version_info(void)
             }
             if (!need->vn_next) break;
             off += need->vn_next;
-            if (!obj_vaddr(o, o->verneed + off, (uint32_t)sizeof(Elf32_Verneed)))
+            if (!obj_vaddr(o, o->verneed + off, (uint64_t)sizeof(Elf64_Verneed)))
                 break;
         }
     }
@@ -679,7 +682,7 @@ static void print_version_info(void)
 static void print_interp(const ldd_obj *o)
 {
     char path[LDD_PATH_MAX];
-    uint32_t n = o->interp_size, base;
+    uint64_t n = o->interp_size, base;
 
     if (o->interp_off >= o->size) return;
     if (n > sizeof(path) - 1) n = sizeof(path) - 1;
@@ -688,7 +691,7 @@ static void print_interp(const ldd_obj *o)
     path[n] = '\0';
 
     printf("\t%s", path);
-    if (obj_peek_base(path, &base)) printf(" (0x%08x)", (unsigned)base);
+    if (obj_peek_base(path, &base)) printf(" (0x%08llx)", (unsigned long long)base);
     printf("\n");
 }
 
@@ -727,8 +730,8 @@ static int ldd_analyze(const char *path, const ldd_opts *op)
         for (i = 1; i < g_nobj; i++) {
             ldd_obj *o = &g_obj[i];
             if (o->found) {
-                printf("\t%s => %s (0x%08x)\n", o->name, o->path,
-                       (unsigned)(o->base & ~0xFFFu));
+                printf("\t%s => %s (0x%08llx)\n", o->name, o->path,
+                       (unsigned long long)(o->base & ~0xFFFull));
             } else {
                 printf("\t%s => not found\n", o->name);
                 rc = 1;

@@ -71,7 +71,7 @@ static void ls_print(const char *name, const struct stat *st,
         cact_ub_human_size(st->st_size, hs, sizeof(hs));
         printf("%s %8s %s%s\n", perm, hs, name, suffix);
     } else {
-        printf("%s %8u %s%s\n", perm, (unsigned)st->st_size, name, suffix);
+        printf("%s %8llu %s%s\n", perm, (unsigned long long)st->st_size, name, suffix);
     }
 }
 
@@ -434,10 +434,12 @@ int cact_ub_stat(char **argv, int argc) {
         write(STDOUT_FILENO, argv[i], strlen(argv[i]));
         write(STDOUT_FILENO, "\n", 1);
         write(STDOUT_FILENO, "Size:  ", 7);
-        itoa((int)st.st_size, buf); write(STDOUT_FILENO, buf, strlen(buf));
+        snprintf(buf, sizeof(buf), "%lld", (long long)st.st_size);
+        write(STDOUT_FILENO, buf, strlen(buf));
         write(STDOUT_FILENO, "\n", 1);
         write(STDOUT_FILENO, "Inode: ", 7);
-        itoa((int)st.st_ino, buf);  write(STDOUT_FILENO, buf, strlen(buf));
+        snprintf(buf, sizeof(buf), "%llu", (unsigned long long)st.st_ino);
+        write(STDOUT_FILENO, buf, strlen(buf));
         write(STDOUT_FILENO, "\n", 1);
         {
             char perm[11];

@@ -78,7 +78,7 @@ CactUserBins-x86_64/
 │   ├── ex_df.c           # df
 │   ├── ex_grep.c         # grep
 │   ├── ex_hash.c         # md5sum, sha1sum (portable C, streamed)
-│   ├── ex_ldd.c          # ldd (ELF32 DT_NEEDED reader, GNU-compatible flags)
+│   ├── ex_ldd.c          # ldd (ELF64 DT_NEEDED reader, GNU-compatible flags)
 │   ├── ex_sys.c          # clear, date, uptime, kill, su, sleep, free, sysinfo, run, modload, modunload, poweroff, reboot, halt
 │   ├── ex_echo.c         # echo (with -n / -e)
 │   ├── ex_nav.c          # pwd

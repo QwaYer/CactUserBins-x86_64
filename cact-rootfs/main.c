@@ -118,9 +118,9 @@ static void copy_file(const char *src, const char *dst) {
     if (out < 0) { close(in); fail("cannot create target"); }
 
     char buf[4096];
-    uint32_t left = (uint32_t)st.st_size;
+    size_t left = (size_t)st.st_size;
     while (left) {
-        uint32_t want = left < sizeof(buf) ? left : (uint32_t)sizeof(buf);
+        size_t want = left < sizeof(buf) ? left : sizeof(buf);
         ssize_t n = read(in, buf, want);
         if (n <= 0) break;
         ssize_t off = 0;
@@ -129,7 +129,7 @@ static void copy_file(const char *src, const char *dst) {
             if (w <= 0) { close(in); close(out); fail("copy failed"); }
             off += w;
         }
-        left -= (uint32_t)n;
+        left -= (size_t)n;
     }
     close(in);
     close(out);
