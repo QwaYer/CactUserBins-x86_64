@@ -1453,3 +1453,16 @@ int cact_ub_halt(char **argv, int argc) {
     return power_cmd("halt", RB_HALT_SYSTEM);
 }
 
+static const char suspend_usage[] = "usage: suspend\n";
+
+int cact_ub_suspend(char **argv, int argc) {
+    if (argc >= 2 && strcmp(argv[1], "--help") == 0) {
+        write(STDOUT_FILENO, suspend_usage, sizeof(suspend_usage) - 1);
+        return 0;
+    }
+    (void)argv; (void)argc;
+    /* The one power path that comes back: power_cmd/ioctl returns when the
+     * machine wakes from S3 (0) or when the suspend was refused (non-zero). */
+    return power_cmd("suspend", RB_SUSPEND);
+}
+
