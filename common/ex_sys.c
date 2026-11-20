@@ -499,12 +499,12 @@ static int gpu_drm_name(char *out, int cap, int *major, int *minor, int *patch) 
 }
 
 /* Fallback without a DRM card: the display controller (class_code 0x03) among the
- * PCI functions of /dev/modinfo.  There each "[pci N]" node prints vendor_id,
+ * PCI functions of /proc/pci.  There each "[pci N]" node prints vendor_id,
  * device_id and class_code, so we take them from one block; the "[drv N]"
  * section is skipped — those are drivers, not discovered hardware. */
 static int gpu_pci_ids(unsigned *vendor, unsigned *device) {
     static char buf[16384];
-    int got = nio_read_file("/dev/modinfo", buf, sizeof(buf) - 1);
+    int got = nio_read_file("/proc/pci", buf, sizeof(buf) - 1);
     if (got <= 0) return -1;
     buf[got] = '\0';
 
@@ -1272,7 +1272,7 @@ static const char modunload_usage[] =
     "usage: modunload [PCI_INDEX|DRIVER_NAME]\n"
     "  no args: unload every loaded module\n"
     "  name:    module name, e.g. ahci for ahci.cctk\n"
-    "  number:  same as [pci N] in /dev/modinfo\n";
+    "  number:  same as [pci N] in /proc/pci\n";
 
 int cact_ub_modunload(char **argv, int argc) {
     if (argc >= 2 && strcmp(argv[1], "--help") == 0) {

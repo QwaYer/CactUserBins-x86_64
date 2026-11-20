@@ -4,8 +4,8 @@
  *   ps        — /proc/<pid>/info (no process names exist in the ABI)
  *   mount     — /dev/sys CACT_SYSCTL_MOUNT (no /proc/mounts: listing is limited)
  *   umount    — /dev/sys CACT_SYSCTL_UMOUNT
- *   lsmod     — parse /dev/modinfo section A (loadable PCI drivers only)
- *   lspci     — parse /dev/modinfo section B
+ *   lsmod     — parse /proc/pci section A (loadable PCI drivers only)
+ *   lspci     — parse /proc/pci section B
  *   dmesg     — read the kernel log from /dev/kmsg
  *   sha256sum / sha384sum — /dev/crypto one-shot hashes
  *
@@ -242,14 +242,14 @@ int cact_ub_lsmod(char **argv, int argc) {
         }
         free(pbuf);
         if (printed) return 0;
-        /* empty /proc/modules: fall back to the /dev/modinfo view below */
+        /* empty /proc/modules: fall back to the /proc/pci view below */
     }
 
-    /* Fallback: parse /dev/modinfo section A. */
+    /* Fallback: parse /proc/pci section A. */
     size_t len = 0;
-    char *buf = cact_ub_read_all("/dev/modinfo", &len);
+    char *buf = cact_ub_read_all("/proc/pci", &len);
     if (!buf) {
-        fprintf(stderr, "lsmod: cannot read /proc/modules or /dev/modinfo\n");
+        fprintf(stderr, "lsmod: cannot read /proc/modules or /proc/pci\n");
         return 1;
     }
 
@@ -299,7 +299,7 @@ int cact_ub_lsmod(char **argv, int argc) {
 
 static const char lspci_usage[] =
     "usage: lspci\n"
-    "List PCI functions from /dev/modinfo (bus:dev.fn class vendor:device).\n";
+    "List PCI functions from /proc/pci (bus:dev.fn class vendor:device).\n";
 
 int cact_ub_lspci(char **argv, int argc) {
     if (argc >= 2 && strcmp(argv[1], "--help") == 0) {
@@ -307,14 +307,14 @@ int cact_ub_lspci(char **argv, int argc) {
         return 0;
     }
     size_t len = 0;
-    char *buf = cact_ub_read_all("/dev/modinfo", &len);
+    char *buf = cact_ub_read_all("/proc/pci", &len);
     if (!buf) {
-        fprintf(stderr, "lspci: cannot read /dev/modinfo\n");
+        fprintf(stderr, "lspci: cannot read /proc/pci\n");
         return 1;
     }
 
     unsigned bus = 0, dev = 0, fn = 0;
-    unsigned vendor = 0, device = 0, cls = 0, rev = 0, irq = 0;
+    unsigned vendor = 0, device = 0, cls = 0, sub = 0, rev = 0, irq = 0;
     int have = 0;
     const char *p = buf;
     while (*p) {
@@ -329,24 +329,27 @@ int cact_ub_lspci(char **argv, int argc) {
         if (strncmp(line, "[pci ", 5) == 0) {
             if (have)
                 printf("%02x:%02x.%x Class %04x [%04x:%04x] rev %02x irq %u\n",
-                       bus, dev, fn, cls, vendor, device, rev, irq);
+                       bus, dev, fn, (cls << 8) | sub, vendor, device, rev, irq);
             unsigned idx = 0;
             sscanf(line, "[pci %u] bus %u dev %u fn %u", &idx, &bus, &dev, &fn);
-            vendor = device = cls = rev = irq = 0;
+            vendor = device = cls = sub = rev = irq = 0;
             have = 1;
         } else if (have) {
             const char *v = after_colon(line);
-            if      (strncmp(line, "vendor_id:", 10) == 0) vendor = (unsigned)strtoul(v, NULL, 0);
-            else if (strncmp(line, "device_id:", 10) == 0) device = (unsigned)strtoul(v, NULL, 0);
-            else if (strncmp(line, "class_code:", 11) == 0) cls   = (unsigned)strtoul(v, NULL, 0);
-            else if (strncmp(line, "revision:", 9) == 0)   rev   = (unsigned)strtoul(v, NULL, 0);
-            else if (strncmp(line, "irq_line:", 9) == 0)   irq   = (unsigned)strtoul(v, NULL, 0);
+            const char *k = line;
+            while (*k == ' ' || *k == '\t') k++;   /* /proc/pci indents its fields */
+            if      (strncmp(k, "vendor_id:", 10) == 0) vendor = (unsigned)strtoul(v, NULL, 0);
+            else if (strncmp(k, "device_id:", 10) == 0) device = (unsigned)strtoul(v, NULL, 0);
+            else if (strncmp(k, "class_code:", 11) == 0) cls   = (unsigned)strtoul(v, NULL, 0);
+            else if (strncmp(k, "subclass:", 9) == 0)    sub   = (unsigned)strtoul(v, NULL, 0);
+            else if (strncmp(k, "revision:", 9) == 0)    rev   = (unsigned)strtoul(v, NULL, 0);
+            else if (strncmp(k, "irq_line:", 9) == 0)    irq   = (unsigned)strtoul(v, NULL, 0);
         }
         p = *e ? e + 1 : e;
     }
     if (have)
         printf("%02x:%02x.%x Class %04x [%04x:%04x] rev %02x irq %u\n",
-               bus, dev, fn, cls, vendor, device, rev, irq);
+               bus, dev, fn, (cls << 8) | sub, vendor, device, rev, irq);
     free(buf);
     return 0;
 }
