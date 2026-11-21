@@ -13,8 +13,10 @@
  *
  * MEMBER is the path inside the archive without a leading '/', e.g.
  *   firmextr usr/lib/firmware/rt2870.bin
- * writes it to /usr/lib/firmware/rt2870.bin (or under -C DIR).  The default
- * archive is /tmp/localrepo.tar.zst, the copy cgoct drops in tmpfs at boot.
+ * writes it to /usr/lib/firmware/rt2870.bin (or under -C DIR).  The archive is
+ * read in place: the kernel serves the module GRUB handed over as
+ * /dev/localrepo, and an installed system keeps it as a plain file — see
+ * fw_archive_candidates.  Nothing copies it into tmpfs (it is ~500 MB).
  *
  * The zstd streaming API needs both I/O buffers at least ZSTD_DStreamOutSize()
  * (128 KB) large, and the DStream workspace is sized from the frame's window —
@@ -37,7 +39,31 @@
 
 #define TAR_BLOCK       512
 #define COPY_BUF        2048
-#define DEFAULT_ARCHIVE "/tmp/localrepo.tar.zst"
+
+/* Where the archive lives, in order: the module the kernel serves in place
+ * first, then the copies an installed system keeps on disk.  /dev/localrepo
+ * publishes the module size (0 = the boot medium carried no module), so a zero
+ * size means "not this one" and the next candidate gets its turn. */
+static const char *fw_archive_candidates[] = {
+    "/dev/localrepo",
+    "/localrepo.tar.zst",
+    "/boot/localrepo.tar.zst",
+    "/usr/lib/localrepo.tar.zst",
+    NULL
+};
+
+static const char *fw_find_archive(void) {
+    struct stat st;
+    for (int i = 0; fw_archive_candidates[i]; i++) {
+        if (stat(fw_archive_candidates[i], &st) != 0) continue;
+        if (S_ISREG(st.st_mode) || S_ISCHR(st.st_mode)) {
+            if (st.st_size > 0) return fw_archive_candidates[i];
+            continue;
+        }
+        return fw_archive_candidates[i];
+    }
+    return NULL;
+}
 
 typedef struct {
     int            fd;
@@ -72,7 +98,8 @@ typedef struct {
 
 static const char fw_usage[] =
     "usage: firmextr [-C DIR] [-f ARCHIVE] [-l] MEMBER...\n"
-    "  -f FILE  archive to read (default " DEFAULT_ARCHIVE ")\n"
+    "  -f FILE  archive to read (default: /dev/localrepo, else a\n"
+    "           localrepo.tar.zst under /, /boot or /usr/lib; '-' = stdin)\n"
     "  -C DIR   extract under DIR (default /)\n"
     "  -l       list the members instead of extracting\n";
 
@@ -355,7 +382,7 @@ static int firmextr_run(zstream *z, const char *root, int list,
 }
 
 int cact_ub_firmextr(char **argv, int argc) {
-    const char *archive = DEFAULT_ARCHIVE;
+    const char *archive = NULL;
     const char *root = "/";
     int list = 0;
     int i = 1;
@@ -391,6 +418,16 @@ int cact_ub_firmextr(char **argv, int argc) {
     if (!list && npat == 0) {
         write(STDERR_FILENO, fw_usage, sizeof(fw_usage) - 1);
         return 2;
+    }
+
+    if (!archive) {
+        archive = fw_find_archive();
+        if (!archive) {
+            fprintf(stderr, "firmextr: no localrepo archive found (looked at "
+                            "/dev/localrepo, /localrepo.tar.zst, "
+                            "/boot/localrepo.tar.zst, /usr/lib/localrepo.tar.zst)\n");
+            return 1;
+        }
     }
 
     int fd = STDIN_FILENO;
