@@ -8,6 +8,7 @@
  *
  *   wljoin                  scan and list access points
  *   wljoin <ssid> <pass>    connect (empty/missing pass = open network)
+ *   wljoin --wds <ssid> <pass>  connect over a repeater/WDS (4-address) uplink
  *   wljoin --selftest       verify the WPA2 crypto vectors
  *   wljoin --status         print the link state and datapath counters
  */
@@ -33,6 +34,7 @@
 
 static int wl_fd = -1;
 static u8  our_mac[6];
+static int want_wds;              /* --wds: repeater/WDS 4-address uplink */
 
 /* Connection target and 4-way handshake state. */
 static u8  cur_bssid[6];
@@ -338,6 +340,16 @@ static int connect_ap(const cact_wlan_bss_t *b, const char *pass) {
     cur_rsn_len  = b->rsn_len;
     memcpy(cur_rsn, b->rsn, b->rsn_len);
 
+    /* A repeater/WDS uplink must be 4-address from the very first frame, so the
+     * mode goes on before joining — a WDS peer may drop a 3-address uplink, and
+     * the engine's auto-latch has nothing to latch from until we send. */
+    if (want_wds) {
+        if (wl_set_wds(wl_fd, 1) != 0)
+            printf("repeater/WDS mode not enabled: %s\n", wl_error());
+        else
+            printf("repeater/WDS (4-address) uplink on\n");
+    }
+
     /* The engine runs open-system auth + association. */
     WL_TRACE("joining (auth/assoc)...\n");
     if (wl_connect(wl_fd, b->bssid, b->ssid, b->ssid_len) != 0) {
@@ -430,6 +442,14 @@ int main(int argc, char **argv) {
     if (argc >= 2 && strcmp(argv[1], "--selftest") == 0)
         return selftest();
 
+    /* A leading --wds selects the repeater/WDS (4-address) uplink; strip it so
+     * the checks and the positional parsing below see the SSID first. */
+    if (argc >= 2 && strcmp(argv[1], "--wds") == 0) {
+        want_wds = 1;
+        argv++;
+        argc--;
+    }
+
     wl_fd = open("/dev/wlan0", O_RDWR);
     if (wl_fd < 0) {
         printf("wljoin: cannot open /dev/wlan0 (errno=%d)\n", errno);
@@ -447,6 +467,8 @@ int main(int argc, char **argv) {
         printf("wljoin: link=%d last_error=%d beacon=%u deauth=%u\n",
                (int)st.linked, (int)st.last_error,
                (unsigned)st.beacon_rx, (unsigned)st.deauth_rx);
+        printf("wljoin: wds=%d (1 = repeater/WDS 4-address)\n",
+               wl_get_wds(wl_fd));
         printf("wljoin: tx data=%u group=%u fail=%u drop(noassoc=%u nokey=%u)\n",
                (unsigned)st.tx_data, (unsigned)st.tx_group,
                (unsigned)st.tx_fail, (unsigned)st.tx_drop_noassoc,
@@ -489,7 +511,7 @@ int main(int argc, char **argv) {
     }
 
     if (argc < 2) {
-        printf("usage: wljoin <ssid> [passphrase]   "
+        printf("usage: wljoin [--wds] <ssid> [passphrase]   "
                "(or --selftest / --status)\n");
         return 0;
     }
