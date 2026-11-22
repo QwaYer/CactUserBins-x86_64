@@ -361,15 +361,28 @@ static int dhcp_get_opt_u8(const uint8_t *opts, int opts_len, uint8_t key, uint8
 static uint32_t g_dns_ip_h = 0x08080808u;
 
 static const char dhcp_usage[] =
-    "usage: dhcp\n"
-    "       DHCP discover/request, applies IP/netmask/gateway/DNS to the network card\n";
+    "usage: dhcp [IF]\n"
+    "       DHCP discover/request, applies IP/netmask/gateway/DNS to network\n"
+    "       interface IF (default: the primary card)\n";
+
+/* Defined further down (shared with the `ip` command). */
+static int ip_ifindex(const char *name);
 
 int cact_ub_dhcp(char **argv, int argc) {
     if (argc >= 2 && strcmp(argv[1], "--help") == 0) {
         w(dhcp_usage);
         return 0;
     }
-    (void)argv; (void)argc;
+    int ifidx = 0;
+    if (argc >= 2 && argv[1][0] != '-') {
+        ifidx = ip_ifindex(argv[1]);
+        if (ifidx < 0) {
+            we("dhcp: unknown interface `");
+            we(argv[1]);
+            we("`\n");
+            return 1;
+        }
+    }
     int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (fd < 0) { perr("dhcp", "socket", fd); return 1; }
 
@@ -528,13 +541,14 @@ int cact_ub_dhcp(char **argv, int argc) {
         return 1;
     }
 
-    cact_netcfg_arg_t cfg;
+    cact_iface_setcfg_arg_t cfg;
     memset(&cfg, 0, sizeof(cfg));
+    cfg.index         = (uint32_t)ifidx;
     cfg.ip_host       = yiaddr_h;
     cfg.netmask_host  = subnet ? subnet : 0xFFFFFF00u;
     cfg.gateway_host  = router;
     cfg.dns_host      = dns ? dns : g_dns_ip_h;
-    int rc = nio_dev_cmd("net", CACT_NETCTL_NETCFG, &cfg);
+    int rc = nio_dev_cmd("net", CACT_NETCTL_IFACE_SETCFG, &cfg);
     if (rc < 0) {
         we("dhcp: failed to apply config in kernel\n");
         close(fd);
@@ -715,7 +729,7 @@ int cact_ub_dns(char **argv, int argc) {
 /*    ip route show                                                          */
 /*    ip route add default via GW   ip route del default                     */
 /*                                                                           */
-/* Control goes through /dev/net (CACT_NETCTL_NETCFG / _GET).                */
+/* Control goes through /dev/net (CACT_NETCTL_IFACE_SETCFG + IFACE_GET).      */
 /* ────────────────────────────────────────────────────────────────────────── */
 
 /* The NIC name is whatever the driver registered ("eth0", "wlan0", ...): read
@@ -775,28 +789,6 @@ static void ip_fmt_ipv4(uint32_t v, char *buf, int cap) {
         for (char *s = t; *s && n < cap - 1; s++) buf[n++] = *s;
     }
     buf[n] = '\0';
-}
-
-static int ip_get_cfg(cact_netcfg_get_t *g) {
-    int rc = nio_dev_cmd("net", CACT_NETCTL_NETCFG_GET, g);
-    if (rc < 0) {
-        we("ip: NETCFG_GET failed rc=");
-        wne(rc);
-        we("\n");
-        return -1;
-    }
-    return 0;
-}
-
-static int ip_set_cfg(const cact_netcfg_arg_t *a) {
-    int rc = nio_dev_cmd("net", CACT_NETCTL_NETCFG, (void *)a);
-    if (rc < 0) {
-        we("ip: NETCFG failed rc=");
-        wne(rc);
-        we(" (need root?)\n");
-        return -1;
-    }
-    return 0;
 }
 
 /* Print one interface in `ip addr` / `ip link` style, from the indexed kernel
@@ -888,17 +880,62 @@ static int ip_enum_dev(const char *only, int show_link_only) {
     return 0;
 }
 
-/* Configuration is applied to the one configurable interface (the NIC); a
- * `dev IF` naming another interface (e.g. the fixed loopback) is refused. */
-static int ip_require_nic(char **argv, int argc) {
+/* Index (as used by CACT_NETCTL_IFACE_GET) of the interface named `name`, or -1. */
+static int ip_ifindex(const char *name) {
+    int count = (int)nio_dev_cmd("net", CACT_NETCTL_IFACE_COUNT, NULL);
+    if (count < 0) count = 0;
+    for (int i = 0; i < count; i++) {
+        cact_iface_get_arg_t a;
+        memset(&a, 0, sizeof(a));
+        a.index = (uint32_t)i;
+        if (nio_dev_cmd("net", CACT_NETCTL_IFACE_GET, &a) < 0) continue;
+        if (strcmp(a.info.name, name) == 0) return i;
+    }
+    return -1;
+}
+
+/* Interface to configure: the one named by `dev IF`, else the primary NIC.
+ * Fills *out (when non-NULL) with its current info and returns its index, or -1
+ * (with a message) when it does not exist or is the loopback. */
+static int ip_target_index(char **argv, int argc, cact_iface_info_t *out) {
     const char *dev = ip_opt_dev(argv, argc);
-    if (dev && strcmp(dev, ip_ifname()) != 0) {
+    const char *name = dev ? dev : ip_ifname();
+    int idx = ip_ifindex(name);
+    if (idx < 0) {
+        we("ip: unknown interface `");
+        we(name);
+        we("`\n");
+        return -1;
+    }
+    cact_iface_get_arg_t a;
+    memset(&a, 0, sizeof(a));
+    a.index = (uint32_t)idx;
+    if (nio_dev_cmd("net", CACT_NETCTL_IFACE_GET, &a) < 0) return -1;
+    if (a.info.flags & CACT_IFACE_FLAG_LOOPBACK) {
         we("ip: cannot configure `");
-        we(dev);
-        we("` (fixed; only ");
-        we(ip_ifname());
-        we(" is configurable)\n");
-        return 1;
+        we(name);
+        we("` (loopback)\n");
+        return -1;
+    }
+    if (out) *out = a.info;
+    return idx;
+}
+
+/* Apply an IPv4 config to interface `idx` (CACT_NETCTL_IFACE_SETCFG). */
+static int ip_set_iface(int idx, uint32_t ip, uint32_t mask, uint32_t gw, uint32_t dns) {
+    cact_iface_setcfg_arg_t a;
+    memset(&a, 0, sizeof(a));
+    a.index        = (uint32_t)idx;
+    a.ip_host      = ip;
+    a.netmask_host = mask;
+    a.gateway_host = gw;
+    a.dns_host     = dns;
+    int rc = nio_dev_cmd("net", CACT_NETCTL_IFACE_SETCFG, &a);
+    if (rc < 0) {
+        we("ip: IFACE_SETCFG failed rc=");
+        wne(rc);
+        we(" (need root?)\n");
+        return -1;
     }
     return 0;
 }
@@ -939,7 +976,9 @@ static int ip_cmd_addr_add(char **argv, int argc) {
         we("usage: ip addr add IP[/PREFIX] dev IF\n");
         return 1;
     }
-    if (ip_require_nic(argv, argc)) return 1;
+    cact_iface_info_t cur;
+    int idx = ip_target_index(argv, argc, &cur);
+    if (idx < 0) return 1;
     uint32_t ip_h;
     int prefix;
     if (ip_parse_addr_prefix(argv[0], &ip_h, &prefix) < 0) {
@@ -951,15 +990,8 @@ static int ip_cmd_addr_add(char **argv, int argc) {
         we("ip: bad prefix\n");
         return 1;
     }
-    cact_netcfg_get_t g;
-    if (ip_get_cfg(&g) < 0) return 1;
-
-    cact_netcfg_arg_t a;
-    a.ip_host       = ip_h;
-    a.netmask_host  = mask;
-    a.gateway_host  = g.gateway_host;   /* routes are left untouched */
-    a.dns_host      = g.dns_host;
-    return ip_set_cfg(&a);
+    /* Routes and the resolver are left untouched. */
+    return ip_set_iface(idx, ip_h, mask, cur.gateway_host, cur.dns_host);
 }
 
 static int ip_cmd_addr_del(char **argv, int argc) {
@@ -967,59 +999,56 @@ static int ip_cmd_addr_del(char **argv, int argc) {
         we("usage: ip addr del IP[/PREFIX] dev IF\n");
         return 1;
     }
-    if (ip_require_nic(argv, argc)) return 1;
+    cact_iface_info_t cur;
+    int idx = ip_target_index(argv, argc, &cur);
+    if (idx < 0) return 1;
     uint32_t ip_h;
     int prefix;
     if (ip_parse_addr_prefix(argv[0], &ip_h, &prefix) < 0) {
         we("ip: bad address\n");
         return 1;
     }
-    cact_netcfg_get_t g;
-    if (ip_get_cfg(&g) < 0) return 1;
-
-    cact_netcfg_arg_t a;
-    a.ip_host       = 0;                 /* remove the address */
-    a.netmask_host  = 0;
-    a.gateway_host  = g.gateway_host;
-    a.dns_host      = g.dns_host;
-    return ip_set_cfg(&a);
+    /* Remove the address; keep the route and the resolver. */
+    return ip_set_iface(idx, 0, 0, cur.gateway_host, cur.dns_host);
 }
 
 static int ip_cmd_addr_flush(char **argv, int argc) {
-    if (ip_require_nic(argv, argc)) return 1;
-    cact_netcfg_arg_t a;
-    a.ip_host       = 0;
-    a.netmask_host  = 0;
-    a.gateway_host  = 0;
-    a.dns_host      = 0;
-    return ip_set_cfg(&a);
+    int idx = ip_target_index(argv, argc, NULL);
+    if (idx < 0) return 1;
+    return ip_set_iface(idx, 0, 0, 0, 0);
 }
 
 static int ip_cmd_route_show(char **argv, int argc) {
-    (void)argv; (void)argc;
-    cact_netcfg_get_t g;
-    if (ip_get_cfg(&g) < 0) return 1;
+    const char *only = ip_opt_dev(argv, argc);
+    int count = (int)nio_dev_cmd("net", CACT_NETCTL_IFACE_COUNT, NULL);
+    if (count < 0) count = 0;
     char buf[20];
-    if (g.gateway_host) {
-        w("default via ");
-        ip_fmt_ipv4(g.gateway_host, buf, sizeof(buf));
-        w(buf);
+    for (int i = 0; i < count; i++) {
+        cact_iface_get_arg_t a;
+        memset(&a, 0, sizeof(a));
+        a.index = (uint32_t)i;
+        if (nio_dev_cmd("net", CACT_NETCTL_IFACE_GET, &a) < 0) continue;
+        if (a.info.flags & CACT_IFACE_FLAG_LOOPBACK) continue;
+        if (only && strcmp(a.info.name, only) != 0) continue;
+        if (a.info.gateway_host) {
+            w("default via ");
+            ip_fmt_ipv4(a.info.gateway_host, buf, sizeof(buf));
+            w(buf);
+        } else {
+            w("default via <none>");
+        }
         w(" dev ");
-        w(ip_ifname());
-        w("\n");
-    } else {
-        w("default via <none> dev ");
-        w(ip_ifname());
+        w(a.info.name[0] ? a.info.name : "?");
         w("\n");
     }
     return 0;
 }
 
 static int ip_cmd_route_add(char **argv, int argc) {
-    /* ip route add default via GW */
+    /* ip route add default via GW [dev IF] */
     if (argc < 3 || strcmp(argv[0], "default") != 0 ||
         strcmp(argv[1], "via") != 0) {
-        we("usage: ip route add default via GW\n");
+        we("usage: ip route add default via GW [dev IF]\n");
         return 1;
     }
     uint32_t gw;
@@ -1027,29 +1056,22 @@ static int ip_cmd_route_add(char **argv, int argc) {
         we("ip: bad gateway\n");
         return 1;
     }
-    cact_netcfg_get_t g;
-    if (ip_get_cfg(&g) < 0) return 1;
-    cact_netcfg_arg_t a;
-    a.ip_host       = g.ip_host;
-    a.netmask_host  = g.netmask_host;
-    a.gateway_host  = gw;
-    a.dns_host      = g.dns_host;
-    return ip_set_cfg(&a);
+    cact_iface_info_t cur;
+    int idx = ip_target_index(argv + 3, argc - 3, &cur);
+    if (idx < 0) return 1;
+    return ip_set_iface(idx, cur.ip_host, cur.netmask_host, gw, cur.dns_host);
 }
 
 static int ip_cmd_route_del(char **argv, int argc) {
+    /* ip route del default [dev IF] */
     if (argc < 1 || strcmp(argv[0], "default") != 0) {
-        we("usage: ip route del default\n");
+        we("usage: ip route del default [dev IF]\n");
         return 1;
     }
-    cact_netcfg_get_t g;
-    if (ip_get_cfg(&g) < 0) return 1;
-    cact_netcfg_arg_t a;
-    a.ip_host       = g.ip_host;
-    a.netmask_host  = g.netmask_host;
-    a.gateway_host  = 0;
-    a.dns_host      = g.dns_host;
-    return ip_set_cfg(&a);
+    cact_iface_info_t cur;
+    int idx = ip_target_index(argv + 1, argc - 1, &cur);
+    if (idx < 0) return 1;
+    return ip_set_iface(idx, cur.ip_host, cur.netmask_host, 0, cur.dns_host);
 }
 
 static const char ip_usage[] =
@@ -1057,7 +1079,9 @@ static const char ip_usage[] =
     "  ip addr show [dev IF] | ip addr add IP[/P] dev IF | "
     "ip addr del IP[/P] dev IF | ip addr flush [dev IF]\n"
     "  ip link show [dev IF]\n"
-    "  ip route show | ip route add default via GW | ip route del default\n";
+    "  ip route show [dev IF] | ip route add default via GW [dev IF] | "
+    "ip route del default [dev IF]\n"
+    "  (dev IF defaults to the primary interface)\n";
 
 int cact_ub_ip(char **argv, int argc) {
     if (argc >= 2 && strcmp(argv[1], "--help") == 0) {
