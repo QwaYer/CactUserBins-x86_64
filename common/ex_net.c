@@ -852,9 +852,10 @@ static void ip_fmt_ipv4(uint32_t v, char *buf, int cap) {
     buf[n] = '\0';
 }
 
-/* `ip -6`: switch the addr/link/route views and the add/del/flush verbs to
- * IPv6.  A per-invocation flag (the tool runs once per process). */
-static int g_ip6 = 0;
+/* Address family for the addr/link/route views: 0 = both (the default, like
+ * `ip`), 4 = IPv4 only (`ip -4`), 6 = IPv6 only (`ip -6`).  The add/del/route
+ * verbs treat anything but 6 as IPv4.  Per-invocation (the tool runs once). */
+static int g_fam = 0;
 
 static int ip6_is_zero(const uint8_t a[16]) {
     for (int i = 0; i < 16; i++)
@@ -885,7 +886,45 @@ static void ip_show_one(const cact_iface_info_t *g, int show_link_only) {
 
     if (show_link_only) return;
 
-    if (g_ip6) {
+    /* IPv4 block (shown unless `ip -6`). */
+    if (g_fam != 6) {
+        if (g->ip_host && g->netmask_host) {
+            int prefix = ip_mask_to_prefix(g->netmask_host);
+            uint32_t bcast = (g->ip_host & g->netmask_host) | ~g->netmask_host;
+            w("    inet ");
+            ip_fmt_ipv4(g->ip_host, buf, sizeof(buf));
+            w(buf);
+            w("/");
+            itoa(prefix, buf);
+            w(buf);
+            w(" brd ");
+            ip_fmt_ipv4(bcast, buf, sizeof(buf));
+            w(buf);
+            w(" scope ");
+            w(is_lo ? "host " : "global ");
+            w(name);
+            w("\n");
+            if (!is_lo && g->gateway_host) {
+                w("    default via ");
+                ip_fmt_ipv4(g->gateway_host, buf, sizeof(buf));
+                w(buf);
+                w(" dev ");
+                w(name);
+                w("\n");
+            }
+            if (!is_lo && g->dns_host) {
+                w("    dns ");
+                ip_fmt_ipv4(g->dns_host, buf, sizeof(buf));
+                w(buf);
+                w("\n");
+            }
+        } else if (g_fam == 4) {
+            w("    (no IPv4 address configured)\n");
+        }
+    }
+
+    /* IPv6 block (shown unless `ip -4`). */
+    if (g_fam != 4) {
         char b6[46];
         int any = 0;
         if (!is_lo && !ip6_is_zero(g->ip6_link_local)) {
@@ -907,42 +946,7 @@ static void ip_show_one(const cact_iface_info_t *g, int show_link_only) {
             inet_ntop(AF_INET6, g->ip6_gateway, b6, sizeof(b6));
             w("    default via "); w(b6); w(" dev "); w(name); w("\n");
         }
-        if (!any) w("    (no IPv6 address configured)\n");
-        return;
-    }
-
-    if (g->ip_host && g->netmask_host) {
-        int prefix = ip_mask_to_prefix(g->netmask_host);
-        uint32_t bcast = (g->ip_host & g->netmask_host) | ~g->netmask_host;
-        w("    inet ");
-        ip_fmt_ipv4(g->ip_host, buf, sizeof(buf));
-        w(buf);
-        w("/");
-        itoa(prefix, buf);
-        w(buf);
-        w(" brd ");
-        ip_fmt_ipv4(bcast, buf, sizeof(buf));
-        w(buf);
-        w(" scope ");
-        w(is_lo ? "host " : "global ");
-        w(name);
-        w("\n");
-        if (!is_lo && g->gateway_host) {
-            w("    default via ");
-            ip_fmt_ipv4(g->gateway_host, buf, sizeof(buf));
-            w(buf);
-            w(" dev ");
-            w(name);
-            w("\n");
-        }
-        if (!is_lo && g->dns_host) {
-            w("    dns ");
-            ip_fmt_ipv4(g->dns_host, buf, sizeof(buf));
-            w(buf);
-            w("\n");
-        }
-    } else {
-        w("    (no IPv4 address configured)\n");
+        if (!any && g_fam == 6) w("    (no IPv6 address configured)\n");
     }
 }
 
@@ -1109,7 +1113,7 @@ static int ip_parse_addr6_prefix(const char *s, uint8_t out[16], uint32_t *prefi
 }
 
 static int ip_cmd_addr_add(char **argv, int argc) {
-    if (g_ip6) {
+    if (g_fam == 6) {
         if (argc < 1) {
             we("usage: ip -6 addr add ADDR[/PREFIX] dev IF\n");
             return 1;
@@ -1149,7 +1153,7 @@ static int ip_cmd_addr_add(char **argv, int argc) {
 }
 
 static int ip_cmd_addr_del(char **argv, int argc) {
-    if (g_ip6) {
+    if (g_fam == 6) {
         if (argc < 1) {
             we("usage: ip -6 addr del ADDR[/PREFIX] dev IF\n");
             return 1;
@@ -1188,7 +1192,7 @@ static int ip_cmd_addr_del(char **argv, int argc) {
 static int ip_cmd_addr_flush(char **argv, int argc) {
     int idx = ip_target_index(argv, argc, NULL);
     if (idx < 0) return 1;
-    if (g_ip6) {
+    if (g_fam == 6) {
         uint8_t zero[16];
         memset(zero, 0, sizeof(zero));
         return ip_set_iface6(idx, zero, 0, zero, zero);
@@ -1208,7 +1212,7 @@ static int ip_cmd_route_show(char **argv, int argc) {
         if (nio_dev_cmd("net", CACT_NETCTL_IFACE_GET, &a) < 0) continue;
         if (a.info.flags & CACT_IFACE_FLAG_LOOPBACK) continue;
         if (only && strcmp(a.info.name, only) != 0) continue;
-        if (g_ip6) {
+        if (g_fam == 6) {
             char b6[46];
             if (!ip6_is_zero(a.info.ip6_gateway)) {
                 inet_ntop(AF_INET6, a.info.ip6_gateway, b6, sizeof(b6));
@@ -1239,14 +1243,14 @@ static int ip_cmd_route_add(char **argv, int argc) {
     /* ip [-6] route add default via GW [dev IF] */
     if (argc < 3 || strcmp(argv[0], "default") != 0 ||
         strcmp(argv[1], "via") != 0) {
-        we(g_ip6 ? "usage: ip -6 route add default via GW6 [dev IF]\n"
+        we(g_fam == 6 ? "usage: ip -6 route add default via GW6 [dev IF]\n"
                  : "usage: ip route add default via GW [dev IF]\n");
         return 1;
     }
     cact_iface_info_t cur;
     int idx = ip_target_index(argv + 3, argc - 3, &cur);
     if (idx < 0) return 1;
-    if (g_ip6) {
+    if (g_fam == 6) {
         uint8_t gw6[16];
         if (inet_pton(AF_INET6, argv[2], gw6) != 1) {
             we("ip: bad IPv6 gateway\n");
@@ -1265,14 +1269,14 @@ static int ip_cmd_route_add(char **argv, int argc) {
 static int ip_cmd_route_del(char **argv, int argc) {
     /* ip [-6] route del default [dev IF] */
     if (argc < 1 || strcmp(argv[0], "default") != 0) {
-        we(g_ip6 ? "usage: ip -6 route del default [dev IF]\n"
+        we(g_fam == 6 ? "usage: ip -6 route del default [dev IF]\n"
                  : "usage: ip route del default [dev IF]\n");
         return 1;
     }
     cact_iface_info_t cur;
     int idx = ip_target_index(argv + 1, argc - 1, &cur);
     if (idx < 0) return 1;
-    if (g_ip6) {
+    if (g_fam == 6) {
         uint8_t zero[16];
         memset(zero, 0, sizeof(zero));
         return ip_set_iface6(idx, cur.ip6, cur.ip6_prefix, zero, cur.ip6_dns);
@@ -1303,8 +1307,8 @@ int cact_ub_ip(char **argv, int argc) {
     int base = 1;
     /* Skip leading options; "-6"/"-4" pick the address family. */
     while (base < argc && argv[base][0] == '-') {
-        if (strcmp(argv[base], "-6") == 0) g_ip6 = 1;
-        else if (strcmp(argv[base], "-4") == 0) g_ip6 = 0;
+        if (strcmp(argv[base], "-6") == 0) g_fam = 6;
+        else if (strcmp(argv[base], "-4") == 0) g_fam = 4;
         base++;
     }
     if (base >= argc) {
