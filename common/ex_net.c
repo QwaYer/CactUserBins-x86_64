@@ -48,6 +48,15 @@ static void print_ipv4_h(uint32_t ip) {
     }
 }
 
+/* Print an IPv6 address (16 big-endian octets) in canonical text form. */
+static void print_ipv6(const uint8_t a[16]) {
+    char b[46];
+    if (inet_ntop(AF_INET6, a, b, sizeof(b)))
+        w(b);
+    else
+        w("?");
+}
+
 /* Parser for "10.0.2.15" -> host byte order. 0 = OK, -1 = error. */
 static int parse_ipv4(const char *s, uint32_t *out) {
     uint32_t r = 0;
@@ -200,8 +209,9 @@ int cact_ub_net(char **argv, int argc) {
 }
 
 static const char ping_usage[] =
-    "usage: ping [-c COUNT] [-i SEC] [-W MS] HOST\n"
+    "usage: ping [-4|-6] [-c COUNT] [-i SEC] [-W MS] HOST\n"
     "       HOST — an address or a name (DNS); -c 0 — until Ctrl-C\n"
+    "       -6 — ICMPv6 (ping6); -4 — ICMPv4 (default)\n"
     "       -W MS — how long to wait for the response (2000 by default)\n";
 
 /* Prints a value in milliseconds with three digits after the decimal point. */
@@ -219,7 +229,7 @@ static void w_ms_from_us(uint32_t us) {
 
 int cact_ub_ping(char **argv, int argc) {
     const char *host = NULL;
-    int count = 4, interval_s = 1, timeout_ms = 2000;
+    int count = 4, interval_s = 1, timeout_ms = 2000, fam6 = 0;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-c") == 0 && i + 1 < argc) {
@@ -231,6 +241,10 @@ int cact_ub_ping(char **argv, int argc) {
         } else if (strcmp(argv[i], "-W") == 0 && i + 1 < argc) {
             timeout_ms = atoi(argv[++i]);
             if (timeout_ms <= 0) timeout_ms = 2000;
+        } else if (strcmp(argv[i], "-6") == 0) {
+            fam6 = 1;
+        } else if (strcmp(argv[i], "-4") == 0) {
+            fam6 = 0;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             w(ping_usage);
             return 0;
@@ -247,6 +261,54 @@ int cact_ub_ping(char **argv, int argc) {
         return 1;
     }
 
+    uint16_t id = (uint16_t)getpid();
+
+    if (fam6) {
+        uint8_t addr6[16];
+        /* An IPv6 literal first, then an AAAA lookup. */
+        if (inet_pton(AF_INET6, host, addr6) != 1) {
+            w("ping: resolve "); w(host); w(" ... ");
+            if (dns_resolve_aaaa(host, addr6) != 0) {
+                we("failed\n");
+                return 1;
+            }
+            print_ipv6(addr6);
+            w("\n");
+        }
+
+        w("PING "); w(host); w(" ("); print_ipv6(addr6); w("): 56 data bytes\n");
+
+        int sent = 0, recvd = 0;
+        for (int seq = 1; count == 0 || seq <= count; seq++) {
+            cact_ping6_wait_arg_t a;
+            memset(&a, 0, sizeof(a));
+            memcpy(a.dst, addr6, 16);
+            a.id         = id;
+            a.seq        = (uint32_t)seq;
+            a.timeout_ms = (uint32_t)timeout_ms;
+
+            int rtt_us = nio_dev_cmd("net", CACT_NETCTL_PING_WAIT6, &a);
+            sent++;
+            if (rtt_us < 0) {
+                w("Request timeout for icmp_seq "); wn(seq); w("\n");
+            } else {
+                recvd++;
+                wn((int)a.bytes_out); w(" bytes from ");
+                print_ipv6(a.src_out);
+                w(": icmp_seq="); wn(seq);
+                w(" time="); w_ms_from_us((uint32_t)rtt_us); w(" ms\n");
+            }
+            if (count == 0 || seq < count) sleep(interval_s > 0 ? interval_s : 1);
+        }
+
+        w("\n--- "); w(host); w(" ping statistics ---\n");
+        wn(sent); w(" packets transmitted, "); wn(recvd);
+        w(" received, ");
+        wn(sent ? (100 * (sent - recvd)) / sent : 0);
+        w("% packet loss\n");
+        return recvd > 0 ? 0 : 1;
+    }
+
     uint32_t ip_h;
     if (parse_ipv4(host, &ip_h) != 0) {
         w("ping: resolve "); w(host); w(" ... ");
@@ -260,7 +322,6 @@ int cact_ub_ping(char **argv, int argc) {
 
     w("PING "); w(host); w(" ("); print_ipv4_h(ip_h); w("): 56 data bytes\n");
 
-    uint16_t id = (uint16_t)getpid();
     int sent = 0, recvd = 0;
     for (int seq = 1; count == 0 || seq <= count; seq++) {
         cact_ping_wait_arg_t a;
@@ -791,6 +852,16 @@ static void ip_fmt_ipv4(uint32_t v, char *buf, int cap) {
     buf[n] = '\0';
 }
 
+/* `ip -6`: switch the addr/link/route views and the add/del/flush verbs to
+ * IPv6.  A per-invocation flag (the tool runs once per process). */
+static int g_ip6 = 0;
+
+static int ip6_is_zero(const uint8_t a[16]) {
+    for (int i = 0; i < 16; i++)
+        if (a[i]) return 0;
+    return 1;
+}
+
 /* Print one interface in `ip addr` / `ip link` style, from the indexed kernel
  * view (CACT_NETCTL_IFACE_GET). */
 static void ip_show_one(const cact_iface_info_t *g, int show_link_only) {
@@ -813,6 +884,32 @@ static void ip_show_one(const cact_iface_info_t *g, int show_link_only) {
     }
 
     if (show_link_only) return;
+
+    if (g_ip6) {
+        char b6[46];
+        int any = 0;
+        if (!is_lo && !ip6_is_zero(g->ip6_link_local)) {
+            inet_ntop(AF_INET6, g->ip6_link_local, b6, sizeof(b6));
+            w("    inet6 "); w(b6); w("/64 scope link\n");
+            any = 1;
+        }
+        if (!ip6_is_zero(g->ip6)) {
+            inet_ntop(AF_INET6, g->ip6, b6, sizeof(b6));
+            w("    inet6 "); w(b6); w("/");
+            itoa((int)g->ip6_prefix, b6);
+            w(b6);
+            w(is_lo ? " scope host " : " scope global ");
+            w(name);
+            w("\n");
+            any = 1;
+        }
+        if (!is_lo && !ip6_is_zero(g->ip6_gateway)) {
+            inet_ntop(AF_INET6, g->ip6_gateway, b6, sizeof(b6));
+            w("    default via "); w(b6); w(" dev "); w(name); w("\n");
+        }
+        if (!any) w("    (no IPv6 address configured)\n");
+        return;
+    }
 
     if (g->ip_host && g->netmask_host) {
         int prefix = ip_mask_to_prefix(g->netmask_host);
@@ -940,6 +1037,27 @@ static int ip_set_iface(int idx, uint32_t ip, uint32_t mask, uint32_t gw, uint32
     return 0;
 }
 
+/* Apply an IPv6 config to interface `idx` (CACT_NETCTL_IFACE_SETCFG6).  An
+ * all-zero addr/gw/dns clears the global address / default route / resolver. */
+static int ip_set_iface6(int idx, const uint8_t addr[16], uint32_t prefix,
+                         const uint8_t gw[16], const uint8_t dns[16]) {
+    cact_iface_setcfg6_arg_t a;
+    memset(&a, 0, sizeof(a));
+    a.index  = (uint32_t)idx;
+    a.prefix = prefix;
+    memcpy(a.addr, addr, 16);
+    if (gw)  memcpy(a.gateway, gw, 16);
+    if (dns) memcpy(a.dns, dns, 16);
+    int rc = nio_dev_cmd("net", CACT_NETCTL_IFACE_SETCFG6, &a);
+    if (rc < 0) {
+        we("ip: IFACE_SETCFG6 failed rc=");
+        wne(rc);
+        we(" (need root?)\n");
+        return -1;
+    }
+    return 0;
+}
+
 static int ip_cmd_addr_show(char **argv, int argc) {
     return ip_enum_dev(ip_opt_dev(argv, argc), 0);
 }
@@ -971,7 +1089,43 @@ static int ip_parse_addr_prefix(const char *s, uint32_t *ip, int *prefix) {
     return 0;
 }
 
+/* "2001:db8::5/64" -> 16 octets + prefix (128 when "/P" is omitted). */
+static int ip_parse_addr6_prefix(const char *s, uint8_t out[16], uint32_t *prefix) {
+    char tmp[64];
+    const char *slash = strchr(s, '/');
+    size_t alen = slash ? (size_t)(slash - s) : strlen(s);
+    if (alen == 0 || alen >= sizeof(tmp)) return -1;
+    memcpy(tmp, s, alen);
+    tmp[alen] = '\0';
+    if (inet_pton(AF_INET6, tmp, out) != 1) return -1;
+    uint32_t pre = 128;
+    if (slash) {
+        if (slash[1] < '0' || slash[1] > '9') return -1;
+        pre = (uint32_t)atoi(slash + 1);
+        if (pre > 128) return -1;
+    }
+    *prefix = pre;
+    return 0;
+}
+
 static int ip_cmd_addr_add(char **argv, int argc) {
+    if (g_ip6) {
+        if (argc < 1) {
+            we("usage: ip -6 addr add ADDR[/PREFIX] dev IF\n");
+            return 1;
+        }
+        cact_iface_info_t cur;
+        int idx = ip_target_index(argv, argc, &cur);
+        if (idx < 0) return 1;
+        uint8_t a6[16];
+        uint32_t pre;
+        if (ip_parse_addr6_prefix(argv[0], a6, &pre) < 0) {
+            we("ip: bad IPv6 address\n");
+            return 1;
+        }
+        /* Route and resolver are left untouched. */
+        return ip_set_iface6(idx, a6, pre, cur.ip6_gateway, cur.ip6_dns);
+    }
     if (argc < 1) {
         we("usage: ip addr add IP[/PREFIX] dev IF\n");
         return 1;
@@ -995,6 +1149,25 @@ static int ip_cmd_addr_add(char **argv, int argc) {
 }
 
 static int ip_cmd_addr_del(char **argv, int argc) {
+    if (g_ip6) {
+        if (argc < 1) {
+            we("usage: ip -6 addr del ADDR[/PREFIX] dev IF\n");
+            return 1;
+        }
+        cact_iface_info_t cur;
+        int idx = ip_target_index(argv, argc, &cur);
+        if (idx < 0) return 1;
+        uint8_t a6[16];
+        uint32_t pre;
+        if (ip_parse_addr6_prefix(argv[0], a6, &pre) < 0) {
+            we("ip: bad IPv6 address\n");
+            return 1;
+        }
+        /* Remove the global address; keep the route and the resolver. */
+        uint8_t zero[16];
+        memset(zero, 0, sizeof(zero));
+        return ip_set_iface6(idx, zero, 0, cur.ip6_gateway, cur.ip6_dns);
+    }
     if (argc < 1) {
         we("usage: ip addr del IP[/PREFIX] dev IF\n");
         return 1;
@@ -1015,6 +1188,11 @@ static int ip_cmd_addr_del(char **argv, int argc) {
 static int ip_cmd_addr_flush(char **argv, int argc) {
     int idx = ip_target_index(argv, argc, NULL);
     if (idx < 0) return 1;
+    if (g_ip6) {
+        uint8_t zero[16];
+        memset(zero, 0, sizeof(zero));
+        return ip_set_iface6(idx, zero, 0, zero, zero);
+    }
     return ip_set_iface(idx, 0, 0, 0, 0);
 }
 
@@ -1030,6 +1208,19 @@ static int ip_cmd_route_show(char **argv, int argc) {
         if (nio_dev_cmd("net", CACT_NETCTL_IFACE_GET, &a) < 0) continue;
         if (a.info.flags & CACT_IFACE_FLAG_LOOPBACK) continue;
         if (only && strcmp(a.info.name, only) != 0) continue;
+        if (g_ip6) {
+            char b6[46];
+            if (!ip6_is_zero(a.info.ip6_gateway)) {
+                inet_ntop(AF_INET6, a.info.ip6_gateway, b6, sizeof(b6));
+                w("default via "); w(b6);
+            } else {
+                w("default via <none>");
+            }
+            w(" dev ");
+            w(a.info.name[0] ? a.info.name : "?");
+            w("\n");
+            continue;
+        }
         if (a.info.gateway_host) {
             w("default via ");
             ip_fmt_ipv4(a.info.gateway_host, buf, sizeof(buf));
@@ -1045,42 +1236,59 @@ static int ip_cmd_route_show(char **argv, int argc) {
 }
 
 static int ip_cmd_route_add(char **argv, int argc) {
-    /* ip route add default via GW [dev IF] */
+    /* ip [-6] route add default via GW [dev IF] */
     if (argc < 3 || strcmp(argv[0], "default") != 0 ||
         strcmp(argv[1], "via") != 0) {
-        we("usage: ip route add default via GW [dev IF]\n");
+        we(g_ip6 ? "usage: ip -6 route add default via GW6 [dev IF]\n"
+                 : "usage: ip route add default via GW [dev IF]\n");
         return 1;
+    }
+    cact_iface_info_t cur;
+    int idx = ip_target_index(argv + 3, argc - 3, &cur);
+    if (idx < 0) return 1;
+    if (g_ip6) {
+        uint8_t gw6[16];
+        if (inet_pton(AF_INET6, argv[2], gw6) != 1) {
+            we("ip: bad IPv6 gateway\n");
+            return 1;
+        }
+        return ip_set_iface6(idx, cur.ip6, cur.ip6_prefix, gw6, cur.ip6_dns);
     }
     uint32_t gw;
     if (parse_ipv4(argv[2], &gw) < 0) {
         we("ip: bad gateway\n");
         return 1;
     }
-    cact_iface_info_t cur;
-    int idx = ip_target_index(argv + 3, argc - 3, &cur);
-    if (idx < 0) return 1;
     return ip_set_iface(idx, cur.ip_host, cur.netmask_host, gw, cur.dns_host);
 }
 
 static int ip_cmd_route_del(char **argv, int argc) {
-    /* ip route del default [dev IF] */
+    /* ip [-6] route del default [dev IF] */
     if (argc < 1 || strcmp(argv[0], "default") != 0) {
-        we("usage: ip route del default [dev IF]\n");
+        we(g_ip6 ? "usage: ip -6 route del default [dev IF]\n"
+                 : "usage: ip route del default [dev IF]\n");
         return 1;
     }
     cact_iface_info_t cur;
     int idx = ip_target_index(argv + 1, argc - 1, &cur);
     if (idx < 0) return 1;
+    if (g_ip6) {
+        uint8_t zero[16];
+        memset(zero, 0, sizeof(zero));
+        return ip_set_iface6(idx, cur.ip6, cur.ip6_prefix, zero, cur.ip6_dns);
+    }
     return ip_set_iface(idx, cur.ip_host, cur.netmask_host, 0, cur.dns_host);
 }
 
 static const char ip_usage[] =
-    "usage: ip [ addr | link | route ] ...\n"
+    "usage: ip [-4|-6] [ addr | link | route ] ...\n"
     "  ip addr show [dev IF] | ip addr add IP[/P] dev IF | "
     "ip addr del IP[/P] dev IF | ip addr flush [dev IF]\n"
     "  ip link show [dev IF]\n"
     "  ip route show [dev IF] | ip route add default via GW [dev IF] | "
     "ip route del default [dev IF]\n"
+    "  ip -6 addr show | ip -6 addr add ADDR[/P] dev IF | "
+    "ip -6 route add default via GW6 [dev IF]\n"
     "  (dev IF defaults to the primary interface)\n";
 
 int cact_ub_ip(char **argv, int argc) {
@@ -1093,8 +1301,12 @@ int cact_ub_ip(char **argv, int argc) {
         return 1;
     }
     int base = 1;
-    /* "ip -4 addr show" — we simply skip the options */
-    while (base < argc && argv[base][0] == '-') base++;
+    /* Skip leading options; "-6"/"-4" pick the address family. */
+    while (base < argc && argv[base][0] == '-') {
+        if (strcmp(argv[base], "-6") == 0) g_ip6 = 1;
+        else if (strcmp(argv[base], "-4") == 0) g_ip6 = 0;
+        base++;
+    }
     if (base >= argc) {
         we(ip_usage);
         return 1;
