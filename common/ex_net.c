@@ -24,6 +24,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
+#include <errno.h>
 
 /* ────────────────────────────────────────────────────────────────────────── */
 /*  Output utilities                                                          */
@@ -105,6 +106,29 @@ static void fill_sin(struct sockaddr_in *a, uint32_t ip_h, uint16_t port_h) {
     a->sin_family = AF_INET;
     a->sin_port   = htons(port_h);
     a->sin_addr   = htonl(ip_h);
+}
+
+/* IPv6 counterpart: sixteen big-endian octets and a port in host order. */
+static void fill_sin6(struct sockaddr_in6 *a, const uint8_t ip6[16], uint16_t port_h) {
+    memset(a, 0, sizeof(*a));
+    a->sin6_family = AF_INET6;
+    a->sin6_port   = htons(port_h);
+    memcpy(a->sin6_addr.s6_addr, ip6, 16);
+}
+
+/* Resolve HOST for a tool that took no family flag: a literal first (v6 with the
+   brackets stripped by the caller), then a name via the kernel resolver.  Fills
+   either ip4_out or ip6_out and returns AF_INET / AF_INET6, or -1. */
+static int resolve_host(const char *host, int prefer6,
+                        uint32_t *ip4_out, uint8_t ip6_out[16]) {
+    if (prefer6 && inet_pton(AF_INET6, host, ip6_out) == 1) return AF_INET6;
+    if (!prefer6 && parse_ipv4(host, ip4_out) == 0) return AF_INET;
+    if (prefer6) {
+        if (dns_resolve_aaaa(host, ip6_out) == 0) return AF_INET6;
+    } else if (dns_resolve(host, ip4_out) == 0) {
+        return AF_INET;
+    }
+    return -1;
 }
 
 /* ────────────────────────────────────────────────────────────────────────── */
@@ -684,25 +708,43 @@ static int dns_skip_name(const uint8_t *pkt, int pkt_len, int off) {
     return -1;
 }
 
-static const char dns_usage[] = "usage: dns HOST [DNS_IP]\n";
+static const char dns_usage[] =
+    "usage: dns [-6] HOST [DNS_SERVER]\n"
+    "       -6 — ask for AAAA (IPv6) instead of A\n"
+    "       DNS_SERVER — an IPv4 or IPv6 literal; the transport follows it\n"
+    "       (default: the last configured IPv4 resolver)\n";
 
 int cact_ub_dns(char **argv, int argc) {
-    if (argc >= 2 && strcmp(argv[1], "--help") == 0) {
+    int aaaa = 0;
+    int i = 1;
+    if (i < argc && (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0)) {
         w(dns_usage);
         return 0;
     }
-    if (argc < 2) {
+    if (i < argc && strcmp(argv[i], "-6") == 0) { aaaa = 1; i++; }
+    if (i >= argc) {
         we(dns_usage);
         return 1;
     }
-    const char *host = argv[1];
+    const char *host = argv[i++];
+
+    /* The resolver address picks the transport: a v6 literal goes over IPv6, a
+       v4 literal (or the DHCP default) over IPv4.  An AAAA query over an IPv4
+       resolver is perfectly normal, so `-6` alone does not change the socket
+       family. */
+    int fam6 = 0;
     uint32_t dns_ip_h = g_dns_ip_h; /* default from last DHCP run */
-    if (argc >= 3 && parse_ipv4(argv[2], &dns_ip_h) < 0) {
-        we("dns: bad DNS_IP\n");
-        return 1;
+    uint8_t dns_ip6[16];
+    if (i < argc) {
+        if (inet_pton(AF_INET6, argv[i], dns_ip6) == 1) {
+            fam6 = 1;
+        } else if (parse_ipv4(argv[i], &dns_ip_h) < 0) {
+            we("dns: bad DNS_SERVER\n");
+            return 1;
+        }
     }
 
-    int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    int fd = socket(fam6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (fd < 0) { perr("dns", "socket", fd); return 1; }
 
     uint8_t pkt[512];
@@ -724,12 +766,16 @@ int cact_ub_dns(char **argv, int argc) {
         close(fd);
         return 1;
     }
-    pkt[off++] = 0; pkt[off++] = 1; /* QTYPE A */
-    pkt[off++] = 0; pkt[off++] = 1; /* QCLASS IN */
+    pkt[off++] = 0; pkt[off++] = aaaa ? 28 : 1; /* QTYPE AAAA / A */
+    pkt[off++] = 0; pkt[off++] = 1;             /* QCLASS IN */
 
-    struct sockaddr_in dst;
-    fill_sin(&dst, dns_ip_h, 53);
-    int sret = sendto(fd, pkt, (uint32_t)off, 0, (struct sockaddr *)&dst, sizeof(dst));
+    struct sockaddr_in  dst4;
+    struct sockaddr_in6 dst6;
+    const struct sockaddr *dst;
+    uint32_t dstlen;
+    if (fam6) { fill_sin6(&dst6, dns_ip6, 53); dst = (const struct sockaddr *)&dst6; dstlen = sizeof(dst6); }
+    else      { fill_sin(&dst4, dns_ip_h, 53); dst = (const struct sockaddr *)&dst4; dstlen = sizeof(dst4); }
+    int sret = sendto(fd, pkt, (uint32_t)off, 0, dst, dstlen);
     if (sret < 0) {
         perr("dns", "sendto", sret);
         close(fd);
@@ -737,9 +783,12 @@ int cact_ub_dns(char **argv, int argc) {
     }
 
     for (int attempt = 0; attempt < 5; attempt++) {
-        struct sockaddr_in from;
-        uint32_t fromlen = sizeof(from);
-        int n = recvfrom(fd, pkt, sizeof(pkt), 0, (struct sockaddr *)&from, &fromlen);
+        struct sockaddr_in  from4;
+        struct sockaddr_in6 from6;
+        struct sockaddr *from = fam6 ? (struct sockaddr *)&from6
+                                     : (struct sockaddr *)&from4;
+        uint32_t fromlen = fam6 ? sizeof(from6) : sizeof(from4);
+        int n = recvfrom(fd, pkt, sizeof(pkt), 0, from, &fromlen);
         if (n <= 0) {
             sleep(1);
             continue;
@@ -750,7 +799,7 @@ int cact_ub_dns(char **argv, int argc) {
         int qd = ntohs(rh->qdcount);
         int an = ntohs(rh->ancount);
         int roff = sizeof(struct dns_hdr);
-        for (int i = 0; i < qd; i++) {
+        for (int f = 0; f < qd; f++) {
             roff = dns_skip_name(pkt, n, roff);
             if (roff < 0 || roff + 4 > n) { roff = -1; break; }
             roff += 4;
@@ -758,7 +807,7 @@ int cact_ub_dns(char **argv, int argc) {
         if (roff < 0) continue;
 
         int found = 0;
-        for (int i = 0; i < an; i++) {
+        for (int f = 0; f < an; f++) {
             roff = dns_skip_name(pkt, n, roff);
             if (roff < 0 || roff + 10 > n) break;
             uint16_t type = ((uint16_t)pkt[roff] << 8) | pkt[roff + 1];
@@ -766,7 +815,12 @@ int cact_ub_dns(char **argv, int argc) {
             uint16_t rdlen = ((uint16_t)pkt[roff + 8] << 8) | pkt[roff + 9];
             roff += 10;
             if (roff + rdlen > n) break;
-            if (type == 1 && cls == 1 && rdlen == 4) {
+            if (aaaa && type == 28 && cls == 1 && rdlen == 16) {
+                w("dns: "); w(host); w(" -> ");
+                print_ipv6(&pkt[roff]);
+                w("\n");
+                found = 1;
+            } else if (!aaaa && type == 1 && cls == 1 && rdlen == 4) {
                 uint32_t ip_h = ((uint32_t)pkt[roff] << 24) |
                                 ((uint32_t)pkt[roff + 1] << 16) |
                                 ((uint32_t)pkt[roff + 2] << 8) |
@@ -780,7 +834,7 @@ int cact_ub_dns(char **argv, int argc) {
         }
         close(fd);
         if (found) return 0;
-        we("dns: no A records\n");
+        we(aaaa ? "dns: no AAAA records\n" : "dns: no A records\n");
         return 1;
     }
 
@@ -1520,9 +1574,11 @@ int cact_ub_arp(char **argv, int argc) {
 
 static void nc_usage(void) {
     fprintf(stderr,
-            "usage: nc HOST PORT\n"
-            "       nc -l [-p PORT]\n"
-            "  relays stdin to the network and the network to stdout\n");
+            "usage: nc [-u] [-6] HOST PORT\n"
+            "       nc -l [-u] [-6] [-p PORT]\n"
+            "  relays stdin to the network and the network to stdout\n"
+            "       -u — UDP instead of TCP\n"
+            "       -6 — IPv6 (a literal, or a name resolved over AAAA)\n");
 }
 
 static int nc_xfer_all(int fd, const char *buf, int len) {
@@ -1578,14 +1634,74 @@ static int nc_relay(int sock) {
     return rc;
 }
 
+/* UDP relay: every line read from stdin becomes one datagram, every datagram
+   received is written to stdout.  `peer` fixes the destination (a client), or is
+   learned from the first datagram when `*peerlen` is 0 on entry (a bound
+   listener — a datagram socket has no connection to learn it from otherwise).
+   Returns 0 on stdin EOF, -1 on a socket error. */
+static int nc_relay_udp(int sock, struct sockaddr *peer, uint32_t *peerlen) {
+    if (*peerlen == 0) {
+        char buf[2048];
+        struct sockaddr_in6 from;          /* room for either family */
+        uint32_t fromlen = sizeof(from);
+        int n = recvfrom(sock, buf, sizeof(buf), 0,
+                         (struct sockaddr *)&from, &fromlen);
+        if (n < 0) { perr("nc", "udp recvfrom", errno); return -1; }
+        memcpy(peer, &from, fromlen);
+        *peerlen = fromlen;
+        if (nc_xfer_all(STDOUT_FILENO, buf, n) != 0) return -1;
+    }
+
+    signal(SIGPIPE, SIG_IGN);
+    pid_t pid = fork();
+    if (pid < 0) { we("nc: fork failed\n"); return -1; }
+    if (pid == 0) {
+        /* child: stdin -> datagrams (blocking read returns 0 at EOF) */
+        signal(SIGPIPE, SIG_IGN);
+        char buf[1200];
+        for (;;) {
+            int n = read(STDIN_FILENO, buf, sizeof(buf));
+            if (n <= 0) break;
+            if (sendto(sock, buf, (uint32_t)n, 0, peer, *peerlen) < 0) {
+                perr("nc", "udp sendto", errno);
+                break;
+            }
+        }
+        _exit(0);
+    }
+
+    /* parent: datagrams -> stdout */
+    char buf[2048];
+    int rc = 0;
+    for (;;) {
+        int n = recvfrom(sock, buf, sizeof(buf), 0, NULL, NULL);
+        if (n < 0) { perr("nc", "udp recvfrom", errno); rc = 1; break; }
+        if (n == 0) break;
+        if (nc_xfer_all(STDOUT_FILENO, buf, n) != 0) { rc = 1; break; }
+    }
+    kill(pid, SIGKILL);
+    {
+        int st;
+        waitpid(pid, &st, 0);
+    }
+    close(sock);
+    return rc;
+}
+
 int cact_ub_nc(char **argv, int argc) {
     int listen_mode = 0;
+    int udp = 0;
+    int fam6 = 0;
     const char *host = NULL;
     int port = -1;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-l") == 0) {
             listen_mode = 1;
+        } else if (strcmp(argv[i], "-u") == 0) {
+            udp = 1;
+        } else if (strcmp(argv[i], "-6") == 0) {
+            fam6 = 1;
         } else if (strcmp(argv[i], "-p") == 0 && i + 1 < argc) {
             port = atoi(argv[++i]);
         } else if (strcmp(argv[i], "-h") == 0 ||
@@ -1605,26 +1721,50 @@ int cact_ub_nc(char **argv, int argc) {
         }
     }
 
+    int domain = fam6 ? AF_INET6 : AF_INET;
+    int type   = udp ? SOCK_DGRAM : SOCK_STREAM;
+    int proto  = udp ? IPPROTO_UDP : IPPROTO_TCP;
+
     if (listen_mode) {
         if (port < 0 || port > 65535) { nc_usage(); return 1; }
-        int sfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        int sfd = socket(domain, type, proto);
         if (sfd < 0) { perr("nc", "socket", sfd); return 1; }
         int one = 1;
         setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
 
-        struct sockaddr_in a;
-        fill_sin(&a, 0, (uint16_t)port);
-        if (bind(sfd, (struct sockaddr *)&a, sizeof(a)) < 0) {
+        struct sockaddr_in  a4;
+        struct sockaddr_in6 a6;
+        const struct sockaddr *bnd;
+        uint32_t bndlen;
+        if (fam6) {
+            fill_sin6(&a6, (const uint8_t[16]){0}, (uint16_t)port);
+            bnd = (const struct sockaddr *)&a6; bndlen = sizeof(a6);
+        } else {
+            fill_sin(&a4, 0, (uint16_t)port);
+            bnd = (const struct sockaddr *)&a4; bndlen = sizeof(a4);
+        }
+        if (bind(sfd, bnd, bndlen) < 0) {
             we("nc: bind port "); wn(port); we(" failed\n");
             close(sfd);
             return 1;
+        }
+        /* Say we are up (and on which port), so an idle wait is not taken for a
+           hang. */
+        we("nc: listening on port "); wne(port);
+        we(udp ? " (udp)\n" : " (tcp)\n");
+        if (udp) {
+            struct sockaddr_in6 peer;
+            uint32_t peerlen = 0;
+            int rc = nc_relay_udp(sfd, (struct sockaddr *)&peer, &peerlen);
+            close(sfd);
+            return rc == 0 ? 0 : 1;
         }
         if (listen(sfd, 1) < 0) {
             we("nc: listen failed\n");
             close(sfd);
             return 1;
         }
-        struct sockaddr_in peer;
+        struct sockaddr_in6 peer;          /* holds either family's peer */
         uint32_t peerlen = sizeof(peer);
         int cs = accept(sfd, (struct sockaddr *)&peer, &peerlen);
         close(sfd);
@@ -1635,21 +1775,43 @@ int cact_ub_nc(char **argv, int argc) {
     if (!host || port < 0) { nc_usage(); return 1; }
     if (port > 65535) { we("nc: bad port\n"); return 1; }
 
-    uint32_t ip;
-    if (parse_ipv4(host, &ip) != 0 && dns_resolve(host, &ip) != 0) {
+    uint32_t ip4 = 0;
+    uint8_t ip6[16];
+    if (resolve_host(host, fam6, &ip4, ip6) < 0) {
         we("nc: cannot resolve ");
         we(host);
         we("\n");
         return 1;
     }
 
-    int fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    struct sockaddr_in  dst4;
+    struct sockaddr_in6 dst6;
+    const struct sockaddr *dst;
+    uint32_t dstlen;
+    if (fam6) {
+        fill_sin6(&dst6, ip6, (uint16_t)port);
+        dst = (const struct sockaddr *)&dst6; dstlen = sizeof(dst6);
+    } else {
+        fill_sin(&dst4, ip4, (uint16_t)port);
+        dst = (const struct sockaddr *)&dst4; dstlen = sizeof(dst4);
+    }
+
+    int fd = socket(domain, type, proto);
     if (fd < 0) { perr("nc", "socket", fd); return 1; }
-    struct sockaddr_in dst;
-    fill_sin(&dst, ip, (uint16_t)port);
-    if (connect(fd, (struct sockaddr *)&dst, sizeof(dst)) < 0) {
+
+    if (udp) {
+        /* No handshake: the "connection" is just the fixed peer address. */
+        struct sockaddr_in6 peer;
+        memcpy(&peer, dst, dstlen);
+        uint32_t peerlen = dstlen;
+        int rc = nc_relay_udp(fd, (struct sockaddr *)&peer, &peerlen);
+        close(fd);
+        return rc == 0 ? 0 : 1;
+    }
+
+    if (connect(fd, dst, dstlen) < 0) {
         we("nc: connect to ");
-        print_ipv4_h(ip);
+        if (fam6) print_ipv6(ip6); else print_ipv4_h(ip4);
         we(":");
         wn(port);
         we(" failed\n");
@@ -1678,9 +1840,11 @@ int cact_ub_nc(char **argv, int argc) {
 #define W_REDIR_MAX 5
 
 static int wget_parse_url(const char *s, char *host, size_t hostsz,
-                          int *port, int *is_tls, char *path, size_t pathsz) {
+                          int *port, int *is_tls, int *is_v6,
+                          char *path, size_t pathsz) {
     if (!s || !s[0]) return -1;
     int tls = 0;
+    int v6 = 0;
     const char *p = s;
     if (strncmp(p, "https://", 8) == 0) {
         tls = 1;
@@ -1690,12 +1854,24 @@ static int wget_parse_url(const char *s, char *host, size_t hostsz,
     }
 
     size_t hn = 0;
-    while (*p && *p != ':' && *p != '/' && hn < hostsz - 1)
-        host[hn++] = *p++;
+    if (*p == '[') {
+        /* An IPv6 literal is bracketed (RFC 3986 § 3.2.2): [::1] or
+           [2001:db8::1].  The brackets are not part of the address. */
+        v6 = 1;
+        p++;
+        while (*p && *p != ']' && hn < hostsz - 1)
+            host[hn++] = *p++;
+        if (*p != ']') return -1;
+        p++;
+    } else {
+        while (*p && *p != ':' && *p != '/' && hn < hostsz - 1)
+            host[hn++] = *p++;
+    }
     host[hn] = '\0';
     if (hn == 0) return -1;
 
     *is_tls = tls;
+    *is_v6 = v6;
     *port = tls ? 443 : 80;
     if (*p == ':') {
         p++;
@@ -1897,10 +2073,13 @@ static int wget_write_all(int fd, const unsigned char *buf, int len) {
 }
 
 static int wget_send_request(tr_t *tr, const char *host, int port, int tls,
-                             const char *path) {
+                             const char *path, int v6) {
     char portstr[8];
+    char hosthdr[192];
     char req[1600];
     int n;
+    /* An IPv6 literal is bracketed in the Host header (RFC 3986 § 3.2.2). */
+    snprintf(hosthdr, sizeof(hosthdr), v6 ? "[%s]" : "%s", host);
     if (port != (tls ? 443 : 80)) {
         itoa(port, portstr);
         n = snprintf(req, sizeof(req),
@@ -1909,7 +2088,7 @@ static int wget_send_request(tr_t *tr, const char *host, int port, int tls,
                      "User-Agent: %s\r\n"
                      "Accept: */*\r\n"
                      "Connection: close\r\n\r\n",
-                     path, host, portstr, W_UA);
+                     path, hosthdr, portstr, W_UA);
     } else {
         n = snprintf(req, sizeof(req),
                      "GET %s HTTP/1.1\r\n"
@@ -1917,7 +2096,7 @@ static int wget_send_request(tr_t *tr, const char *host, int port, int tls,
                      "User-Agent: %s\r\n"
                      "Accept: */*\r\n"
                      "Connection: close\r\n\r\n",
-                     path, host, W_UA);
+                     path, hosthdr, W_UA);
     }
     if (n <= 0 || n >= (int)sizeof(req)) return -1;
     if (tr_write_all(tr, req, n) != 0) return -1;
@@ -2075,15 +2254,27 @@ static int wget_save_body(wbuf_t *b, int outfd, int chunked, long clen,
     return 0;
 }
 
-/* Connect and, if needed, bring up a TLS session.  NULL on error. */
-static tr_t *wget_open_conn(const char *host, int port, int use_tls) {
-    uint32_t ip;
-    if (parse_ipv4(host, &ip) != 0 && dns_resolve(host, &ip) != 0) return NULL;
-    int fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+/* Connect and, if needed, bring up a TLS session.  `v6` picks the family: an
+   IPv6 literal or an AAAA lookup against the v4 path's A.  NULL on error. */
+static tr_t *wget_open_conn(const char *host, int port, int use_tls, int v6) {
+    struct sockaddr_in  dst4;
+    struct sockaddr_in6 dst6;
+    const struct sockaddr *dst;
+    uint32_t dstlen;
+    if (v6) {
+        uint8_t ip6[16];
+        if (resolve_host(host, 1, NULL, ip6) < 0) return NULL;
+        fill_sin6(&dst6, ip6, (uint16_t)port);
+        dst = (const struct sockaddr *)&dst6; dstlen = sizeof(dst6);
+    } else {
+        uint32_t ip = 0;
+        if (resolve_host(host, 0, &ip, NULL) < 0) return NULL;
+        fill_sin(&dst4, ip, (uint16_t)port);
+        dst = (const struct sockaddr *)&dst4; dstlen = sizeof(dst4);
+    }
+    int fd = socket(v6 ? AF_INET6 : AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (fd < 0) return NULL;
-    struct sockaddr_in dst;
-    fill_sin(&dst, ip, (uint16_t)port);
-    if (connect(fd, (struct sockaddr *)&dst, sizeof(dst)) < 0) {
+    if (connect(fd, dst, dstlen) < 0) {
         close(fd);
         return NULL;
     }
@@ -2115,16 +2306,21 @@ static tr_t *wget_open_conn(const char *host, int port, int use_tls) {
 int cact_ub_wget(char **argv, int argc) {
     const char *url = NULL;
     const char *outfile = NULL;
+    int force6 = 0;
 
     for (int i = 1; i < argc; i++) {
         if ((strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "-O") == 0) &&
             i + 1 < argc) {
             outfile = argv[++i];
+        } else if (strcmp(argv[i], "-6") == 0) {
+            force6 = 1;
         } else if (strcmp(argv[i], "-h") == 0 ||
                    strcmp(argv[i], "--help") == 0) {
             fprintf(stderr,
-                    "usage: wget [-o FILE] http[s]://HOST[:PORT][/PATH]\n"
+                    "usage: wget [-6] [-o FILE] http[s]://HOST[:PORT][/PATH]\n"
                     "  micro HTTP/1.1 GET client (TLS 1.3, certificate verified)\n"
+                    "  HOST — a name, an IPv4 address, or a bracketed IPv6 one\n"
+                    "         ([::1]); -6 forces an AAAA lookup for a name\n"
                     "  default output: basename of PATH (index.html for '/')\n");
             return 0;
         } else if (argv[i][0] == '-' && argv[i][1]) {
@@ -2137,7 +2333,7 @@ int cact_ub_wget(char **argv, int argc) {
         }
     }
     if (!url) {
-        we("usage: wget [-o FILE] http[s]://HOST[:PORT][/PATH]\n");
+        we("usage: wget [-6] [-o FILE] http[s]://HOST[:PORT][/PATH]\n");
         return 1;
     }
 
@@ -2145,21 +2341,23 @@ int cact_ub_wget(char **argv, int argc) {
     char path[768];
     int  port = 80;
     int  tls = 0;
-    if (wget_parse_url(url, host, sizeof(host), &port, &tls,
+    int  v6 = 0;
+    if (wget_parse_url(url, host, sizeof(host), &port, &tls, &v6,
                        path, sizeof(path)) != 0) {
         we("wget: bad URL\n");
         return 1;
     }
+    if (force6) v6 = 1;
 
     for (int attempt = 0; attempt < W_REDIR_MAX; attempt++) {
-        tr_t *tr = wget_open_conn(host, port, tls);
+        tr_t *tr = wget_open_conn(host, port, tls, v6);
         if (!tr) {
             we("wget: cannot connect to ");
             we(host);
             we("\n");
             return 1;
         }
-        if (wget_send_request(tr, host, port, tls, path) != 0) {
+        if (wget_send_request(tr, host, port, tls, path, v6) != 0) {
             we("wget: send failed\n");
             tr_close(tr);
             free(tr);
@@ -2200,11 +2398,12 @@ int cact_ub_wget(char **argv, int argc) {
             }
             if (strncmp(loc, "http://", 7) == 0 ||
                 strncmp(loc, "https://", 8) == 0) {
-                if (wget_parse_url(loc, host, sizeof(host), &port, &tls,
+                if (wget_parse_url(loc, host, sizeof(host), &port, &tls, &v6,
                                    path, sizeof(path)) != 0) {
                     we("wget: bad redirect Location\n");
                     return 1;
                 }
+                if (force6) v6 = 1;
             } else if (loc[0] == '/') {
                 strncpy(path, loc, sizeof(path) - 1);
                 path[sizeof(path) - 1] = '\0';
