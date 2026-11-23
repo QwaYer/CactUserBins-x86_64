@@ -955,6 +955,12 @@ static void ip_show_one(const cact_iface_info_t *g, int show_link_only) {
             inet_ntop(AF_INET6, g->ip6_gateway, b6, sizeof(b6));
             w("    default via "); w(b6); w(" dev "); w(name); w("\n");
         }
+        /* The IPv6 resolver (from the RA's RDNSS or DHCPv6) — the one used for
+         * lookups when there is no usable IPv4 resolver. */
+        if (!is_lo && !ip6_is_zero(g->ip6_dns)) {
+            inet_ntop(AF_INET6, g->ip6_dns, b6, sizeof(b6));
+            w("    dns6 "); w(b6); w("\n");
+        }
         if (!any && g_fam == 6) w("    (no IPv6 address configured)\n");
     }
 }
