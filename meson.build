@@ -79,7 +79,7 @@ apps = [
   'pwd', 'ls', 'mkdir', 'rmdir', 'rm', 'cat', 'wrt', 'stat', 'mv', 'ln',
   'readlink', 'ldd', 'clear', 'date', 'uptime', 'kill', 'su', 'sleep', 'free', 'sysinfo',
   'modload', 'modunload', 'run', 'echo', 'true', 'false', 'whoami', 'id',
-  'chmod', 'chown', 'version', 'ip', 'ping', 'arp', 'wget', 'dd', 'df', 'grep', 'fdisk', 'mkfs.ext4',
+  'chmod', 'chown', 'version', 'ip', 'ping', 'arp', 'fw', 'wget', 'dd', 'df', 'grep', 'fdisk', 'mkfs.ext4',
   'mkfs.fat32', 'cact-rootfs', 'poweroff', 'reboot', 'halt', 'suspend',
   'head', 'tail', 'wc', 'sort', 'uniq', 'cut', 'tr', 'tee', 'seq', 'yes', 'printf',
   'cp', 'touch',
@@ -99,7 +99,7 @@ apps = [
 
 # The Makefile's SBIN_APPS list.
 sbin_apps = [
-  'kill', 'su', 'modload', 'modunload', 'ping', 'ip', 'arp', 'dd', 'df',
+  'kill', 'su', 'modload', 'modunload', 'ping', 'ip', 'arp', 'fw', 'dd', 'df',
   'fdisk', 'mkfs.ext4', 'mkfs.fat32', 'cact-rootfs',
   'poweroff', 'reboot', 'halt', 'suspend',
   'mount', 'umount', 'wljoin',
@@ -140,6 +140,7 @@ common_lib = static_library('common',
     'common/ex_view.c',
     'common/ex_archive.c',
     'common/ex_shell.c',
+    'common/ex_fw.c',
   ),
   # ex_sys.c reads the current KMS mode for sysinfo, so the shared objects
   # compile against the DRM uapi headers.
