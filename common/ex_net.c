@@ -288,6 +288,15 @@ int cact_ub_ping(char **argv, int argc) {
             a.timeout_ms = (uint32_t)timeout_ms;
 
             int rtt_us = nio_dev_cmd("net", CACT_NETCTL_PING_WAIT6, &a);
+            if (rtt_us == -2) {
+                /* The kernel has no IPv6 path to this destination — no global
+                 * address to source from, or no route (see
+                 * `stack::ipv6_probe_reachable`).  Report that plainly instead of
+                 * "Request timeout": nothing was sent, so it is not packet loss. */
+                w("ping: no IPv6 route to "); print_ipv6(addr6);
+                w(" (no global address or default route)\n");
+                break;
+            }
             sent++;
             if (rtt_us < 0) {
                 w("Request timeout for icmp_seq "); wn(seq); w("\n");
