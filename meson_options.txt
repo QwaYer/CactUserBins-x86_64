@@ -13,8 +13,5 @@ option('lr_sbin', type: 'string', value: '../LocalRepoCactOS-x86_64/lib/sbin',
 option('drmuapi', type: 'string', value: '../CactKernel-x86_64/Cact/drivers/gpu/drm/uapi',
   description: 'DRM uapi include directory, so ex_sys.c reads the KMS mode for sysinfo against the kernel ABI headers')
 
-option('zstd_dir', type: 'string', value: '../CactKernel-x86_64/Cact/drivers/zstd',
-  description: 'vendored zstd sources shared with the kernel tree; firmextr links them to stream the compressed firmrepo archive')
-
 option('grub_repo', type: 'string', value: '../grubrepo',
   description: 'grubrepo: menu templates + tools used to generate cact-rootfs\'s grub.cfg, relative or absolute')

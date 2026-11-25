@@ -13,12 +13,17 @@
 (`<tool>/main.c`), общие реализации — в `common/` (24 объекта `ex_*.c`), плюс три
 host-инструмента для подготовки образов (`fdisk`, `mkfs.ext4`, `mkfs.fat32`,
 `cact-rootfs`). Одно `foreach` в `meson.build` собирает по одной PIE на
-инструмент из списков `apps`/`sbin_apps`; `firmextr` дополнительно линкует zstd.
+инструмент из списков `apps`/`sbin_apps`.
 
 Зависимости сборки — все уже портированы: `CactLibc-x86_64` (`start.o`,
 `clibc.so`), `Cactsole-x86_64` (`include/` — общий `shell.h` для bridge-утилит
-`cd`/`export`/`unset`/`exit`/`jobs`/`fg`/`bg`/`help`), а DRM-uapi и zstd берутся
+`cd`/`export`/`unset`/`exit`/`jobs`/`fg`/`bg`/`help`), а DRM-uapi берётся
 из `CactKernel-x86_64`.
+
+> **2026-11-25: `firmextr` убран.** Распаковка boot-архивов (`firmrepo`,
+> `netdrvrepo`, `drvrepo`, `localbinrepo`) теперь делается портом zstd
+> (`CactZstd-x86_64`): `zstd -dc <архив> | tar -xf -`. Отдельный распаковщик
+> больше не нужен, а zstd стейджится в `/usr/bin` из `LocalRepoCactOS-x86_64`.
 
 ## Инвентарь 32-битных поверхностей
 
@@ -30,7 +35,7 @@ host-инструмента для подготовки образов (`fdisk`,
 - `link.ld` — секции `.rel.dyn`/`.rel.plt` (в x86_64 — `.rela.*`); нет
   `.data.rel.ro`. База `0x08000000` не двигается (решения 5/9 ядра).
 - `meson_options.txt` — шесть путей по умолчанию: `cactlib`, `cactsoleinc`,
-  `lr_bin`, `lr_sbin`, `drmuapi`, `zstd_dir` — все `../*-x86_32/...`.
+  `lr_bin`, `lr_sbin`, `drmuapi` (плюс `grub_repo`) — все `../*-x86_32/...`.
 - `README.md` — бейдж `i686`, ссылки `*-x86_32`, `LocalRepoCactOS-x86_32`.
 
 ## Решения
@@ -38,7 +43,7 @@ host-инструмента для подготовки образов (`fdisk`,
 1. **Тулчейн как у соседей.** `cross/x86_64-cact-clang.ini` (`-m64`,
    `cpu_family=cpu=x86_64`), `ld -m elf_x86_64`, дефолты `meson_options.txt` →
    `../*-x86_64` (`cactlib`, `cactsoleinc`, `lr_bin`, `lr_sbin`, `drmuapi`,
-   `zstd_dir`).
+   `grub_repo`).
 2. **Host-инструменты — `-m64`.** `host_c_args`/`host_link_args` были `-m32`
    только потому, что сборочная машина тоже i386; на x86_64 хост и цель
    совпали, и бинарник сборочной машины собирается нативно.
