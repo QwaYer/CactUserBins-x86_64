@@ -1212,8 +1212,11 @@ static unsigned parse_u32(const char *s) {
 
 static const char modload_usage[] =
     "usage: modload PATH [VENDOR_ID DEVICE_ID]\n"
+    "  PATH is a module name or path; the kernel looks it up in the staged\n"
+    "  localbinrepo image and then in the drvrepo / netdrvrepo archives, so a\n"
+    "  bare module name works even though the .cctk is not a file on disk.\n"
     "  IDs omitted: use cact_pci_* manifest inside the .cctk\n"
-    "  example: modload virtio_net.cctk\n"
+    "  example: modload ahci.cctk\n"
     "  example: modload /usr/lib/modules/virtio_net.cctk 0x1AF4 0x1041\n";
 
 int cact_ub_modload(char **argv, int argc) {
