@@ -45,6 +45,15 @@ drmuapi = _drmuapi.startswith('/') ? _drmuapi : src_root / _drmuapi
 _grub = get_option('grub_repo')
 grub_root = _grub.startswith('/') ? _grub : src_root / _grub
 
+# cact-rootfs writes a grub.cfg into the skeleton; it is generated from
+# grubrepo's menu template rather than kept a second time in C.  Defined here,
+# before the app loop, because the target cact-rootfs (not only the host tool
+# below) compiles against it.
+gen_grub_h = custom_target('gen_grub.h',
+  output: 'gen_grub.h',
+  command: [python3, grub_root / 'tools' / 'gen-cfg-header.py',
+            grub_root / 'menus' / 'menu-rootfs.cfg', 'GEN_GRUB', '@OUTPUT@'])
+
 start_o = cactlib / 'build-meson' / 'start.o'
 clibc_so = cactlib / 'build-meson' / 'clibc.so'
 
@@ -157,6 +166,11 @@ foreach app : apps
     sources += files(app / standalone_tools[app])
     use_common = false
   endif
+  if app == 'cact-rootfs'
+    # main.c includes the generated grub.cfg header (grubrepo's menu-rootfs.cfg)
+    # in both builds; this is the CactOS-target one.
+    sources += gen_grub_h
+  endif
 
   # Meson/ninja reserve the target name "test", so the binary is built as
   # cact-test and the stage step installs it under its real name.
@@ -215,13 +229,6 @@ host_c_args = ['-m64', '-O2', '-Wall', '-Wno-unused-function', '-Wno-unused-vari
 # These are build-machine binaries; on x86_64 the host and the target share one
 # architecture, so a plain -m64 native link is all the host tools need.
 host_link_args = ['-m64']
-
-# cact-rootfs writes a grub.cfg into the skeleton; it is generated from
-# grubrepo's menu template rather than kept a second time in C.
-gen_grub_h = custom_target('gen_grub.h',
-  output: 'gen_grub.h',
-  command: [python3, grub_root / 'tools' / 'gen-cfg-header.py',
-            grub_root / 'menus' / 'menu-rootfs.cfg', 'GEN_GRUB', '@OUTPUT@'])
 
 executable('host-fdisk',
   files('fdisk/main.c', 'fdisk/ptab.c'),
