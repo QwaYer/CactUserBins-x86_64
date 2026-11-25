@@ -27,6 +27,7 @@ project('cact-userbins', 'c',
 fs = import('fs')
 bash = find_program('bash')
 ld = find_program('ld')
+python3 = find_program('python3')
 
 src_root = meson.project_source_root()
 
@@ -43,6 +44,8 @@ _drmuapi = get_option('drmuapi')
 drmuapi = _drmuapi.startswith('/') ? _drmuapi : src_root / _drmuapi
 _zstd = get_option('zstd_dir')
 zstd_dir = _zstd.startswith('/') ? _zstd : src_root / _zstd
+_grub = get_option('grub_repo')
+grub_root = _grub.startswith('/') ? _grub : src_root / _grub
 
 start_o = cactlib / 'build-meson' / 'start.o'
 clibc_so = cactlib / 'build-meson' / 'clibc.so'
@@ -237,6 +240,13 @@ host_c_args = ['-m64', '-O2', '-Wall', '-Wno-unused-function', '-Wno-unused-vari
 # architecture, so a plain -m64 native link is all the host tools need.
 host_link_args = ['-m64']
 
+# cact-rootfs writes a grub.cfg into the skeleton; it is generated from
+# grubrepo's menu template rather than kept a second time in C.
+gen_grub_h = custom_target('gen_grub.h',
+  output: 'gen_grub.h',
+  command: [python3, grub_root / 'tools' / 'gen-cfg-header.py',
+            grub_root / 'menus' / 'menu-rootfs.cfg', 'GEN_GRUB', '@OUTPUT@'])
+
 executable('host-fdisk',
   files('fdisk/main.c', 'fdisk/ptab.c'),
   native: true, c_args: host_c_args, link_args: host_link_args,
@@ -254,5 +264,6 @@ executable('host-mkfs.fat32',
 
 executable('host-cact-rootfs',
   files('cact-rootfs/main.c'),
+  gen_grub_h,
   native: true, c_args: host_c_args, link_args: host_link_args,
   build_by_default: false)

@@ -34,6 +34,9 @@
 #include <dirent.h>
 #endif
 
+/* Generated at build time from grubrepo/menus/menu-rootfs.cfg. */
+#include "gen_grub.h"
+
 #define MODE_DIR  0755
 #define MODE_FILE 0644
 
@@ -194,14 +197,6 @@ static void copy_tree(const char *src, const char *dst) {
         }
     }
 }
-
-static const char *GEN_GRUB =
-    "set timeout=5\n"
-    "set default=0\n"
-    "menuentry \"CactOS\" {\n"
-    "    multiboot2 /boot/kernel.bin\n"
-    "    module2 /boot/localbinrepo.img localbinrepo\n"
-    "}\n";
 
 int main(int argc, char **argv) {
     const char *target = NULL;

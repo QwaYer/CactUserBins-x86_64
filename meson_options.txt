@@ -15,3 +15,6 @@ option('drmuapi', type: 'string', value: '../CactKernel-x86_64/Cact/drivers/gpu/
 
 option('zstd_dir', type: 'string', value: '../CactKernel-x86_64/Cact/drivers/zstd',
   description: 'vendored zstd sources shared with the kernel tree; firmextr links them to stream the compressed firmrepo archive')
+
+option('grub_repo', type: 'string', value: '../grubrepo',
+  description: 'grubrepo: menu templates + tools used to generate cact-rootfs\'s grub.cfg, relative or absolute')
