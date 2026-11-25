@@ -11,7 +11,7 @@
 
 <p align="center">
   A <strong>userspace tool suite</strong> for <strong>Cact OS</strong>: one <strong>small PIE ELF</strong> per command, shared implementations in <strong><code>common/</code></strong>, linked with <strong><code>clibc.so</code></strong> from <strong>CactLib</strong>.<br>
-  Built artefacts land under <strong><code>build-meson/</code></strong>; <strong><code>ninja -C build-meson stage</code></strong> distributes them into <strong><code>LocalRepoCactOS-x86_64/lib/bin</code></strong> and <strong><code>lib/sbin</code></strong> for <strong>cctkfs</strong> packing.
+  Built artefacts land under <strong><code>build-meson/</code></strong>; <strong><code>ninja -C build-meson stage</code></strong> distributes them into <strong><code>LocalRepoCactOS-x86_64/lib/bin</code></strong> and <strong><code>lib/sbin</code></strong> for <strong>localbinrepo</strong> packing.
 </p>
 
 <p align="center">
@@ -38,9 +38,9 @@
 |-----------|------|
 | **[CactLib-x86_64](https://github.com/QwaYer/CactLibc-x86_64)** | **`clibc.so`** + **`build-meson/start.o`** — required for every link line |
 | **[Cactsole-x86_64](https://github.com/QwaYer/Cactsole-x86_64)** | Interactive shell; it does **not** describe these tools — **`help <tool>`** runs the tool with **`--help`** and each tool documents itself |
-| **[LocalRepoCactOS-x86_64](../LocalRepoCactOS-x86_64)** | **`ninja -C build-meson stage`** fills **`lib/bin/`** and **`lib/sbin/`** here before **`cctkfs.img`** is packed |
+| **[LocalRepoCactOS-x86_64](../LocalRepoCactOS-x86_64)** | **`ninja -C build-meson stage`** fills **`lib/bin/`** and **`lib/sbin/`** here before **`localbinrepo.img`** is packed |
 | **[CactOS-x86_64](https://github.com/QwaYer/CactOS-x86_64)** | **Workspace integrator** — sets **`CACTLIB`**, **`CACTSOLEINC`**, **`LR_*`**, then **`LocalRepo`** + **kernel** + **CactBridge** |
-| **[CactKernel-x86_64](https://github.com/QwaYer/CactKernel-x86_64)** | **binfs** / **sbinfs** overlay **`/usr/bin/*`** and **`/usr/sbin/*`** from the **cctkfs** module (reached through the **`/bin`** and **`/sbin`** symlinks) on top of disk-backed FS |
+| **[CactKernel-x86_64](https://github.com/QwaYer/CactKernel-x86_64)** | **binfs** / **sbinfs** overlay **`/usr/bin/*`** and **`/usr/sbin/*`** from the **localbinrepo** module (reached through the **`/bin`** and **`/sbin`** symlinks) on top of disk-backed FS |
 
 ---
 
@@ -134,7 +134,7 @@ Installer-building tools — the CactOS analogues of `parted`, `mkfs.ext4`,
 | **`fdisk`** | MBR/GPT partition-table editor. Reads/writes `/dev/<disk>` nodes (whole-disk CactOS block devices) or raw images; after `w` asks the kernel to re-scan the disk (`/dev/sys` ioctl) so `/dev/sdaN` appears without a reboot. Verbs: `p o g n d t b l w`; pure logic in `fdisk/ptab.c`. |
 | **`mkfs.ext4`** | Formats a device/partition/image as ext4 compatible with the CactOS `ext4.cctk` module: 4096-byte blocks, no journal / 64-bit / metadata_csum / flex_bg, inode size ≥ 256. `-b`, `-I`, `-L`. |
 | **`mkfs.fat32`** | Formats a device as a standard FAT32 volume (`-n label`); mirrors the FAT and writes FSInfo + backup boot sector. |
-| **`cact-rootfs`** | Deploys the root skeleton onto a mounted target: `boot/` (kernel + `cctkfs.img` + generated `grub.cfg`), `/etc`, `/var/{log,run,tmp}`, the **`/usr/{bin,sbin,lib,include,share}`** dirs and the **`/bin`→`usr/bin`** style symlinks; `-b` also copies `/usr` from the running tree. |
+| **`cact-rootfs`** | Deploys the root skeleton onto a mounted target: `boot/` (kernel + `localbinrepo.img` + generated `grub.cfg`), `/etc`, `/var/{log,run,tmp}`, the **`/usr/{bin,sbin,lib,include,share}`** dirs and the **`/bin`→`usr/bin`** style symlinks; `-b` also copies `/usr` from the running tree. |
 
 Format logic lives in portable C (`fdisk/ptab.c`, `mkfs.ext4/ext4_fmt.c`,
 `mkfs.fat32/fat32_fmt.c`) so it can be validated on the host:

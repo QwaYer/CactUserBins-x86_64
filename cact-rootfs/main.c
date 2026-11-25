@@ -13,7 +13,7 @@
  *     -s DIR     source root to copy /usr from (default "/")
  *     -b         also copy /usr into TARGET and link /bin,/sbin,/lib
  *     -k FILE    copy FILE -> TARGET/boot/kernel.bin
- *     -m FILE    copy FILE -> TARGET/boot/cctkfs.img
+ *     -m FILE    copy FILE -> TARGET/boot/localbinrepo.img
  *     -g FILE    copy FILE -> TARGET/boot/grub/grub.cfg (default: generated)
  *     -q         quiet
  */
@@ -200,7 +200,7 @@ static const char *GEN_GRUB =
     "set default=0\n"
     "menuentry \"CactOS\" {\n"
     "    multiboot2 /boot/kernel.bin\n"
-    "    module2 /boot/cctkfs.img cctkfs\n"
+    "    module2 /boot/localbinrepo.img localbinrepo\n"
     "}\n";
 
 int main(int argc, char **argv) {
@@ -218,7 +218,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "-q"))                 quiet = 1;
         else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) {
             printf("usage: cact-rootfs [-s SRCDIR] [-b] [-k kernel] "
-                   "[-m cctkfs] [-g grub.cfg] TARGET\n");
+                   "[-m localbinrepo] [-g grub.cfg] TARGET\n");
             return 0;
         } else if (argv[i][0] == '-' && strcmp(argv[i], "-")) {
             fprintf(stderr, "cact-rootfs: unknown option %s\n", argv[i]);
@@ -278,7 +278,7 @@ int main(int argc, char **argv) {
             copy_file(kb, p);
         }
         if (mb) {
-            snprintf(p, sizeof(p), "%s/boot/cctkfs.img", target);
+            snprintf(p, sizeof(p), "%s/boot/localbinrepo.img", target);
             msg("installing %s -> %s\n", mb, p);
             copy_file(mb, p);
         }

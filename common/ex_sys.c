@@ -1247,7 +1247,7 @@ int cact_ub_modload(char **argv, int argc) {
     char        num[16];
     switch (errno) {
     case EPERM:  m = "modload: permission denied (need root)\n";            break;
-    case ENOENT: m = "modload: no such module (not in cctkfs/VFS)\n";       break;
+    case ENOENT: m = "modload: no such module (not in localbinrepo/VFS)\n"; break;
     case EACCES: m = "modload: module signature rejected (bad HMAC)\n";     break;
     case EBUSY:  m = "modload: module slot busy (modunload first)\n";       break;
     case EEXIST: m = "modload: already loaded (modunload first)\n";          break;
