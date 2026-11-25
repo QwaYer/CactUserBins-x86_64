@@ -1,5 +1,5 @@
 /*
- * firmextr.c — extract individual files from the compressed "localrepo"
+ * firmextr.c — extract individual files from the compressed "firmrepo"
  * archive.
  *
  *   firmextr [-C DIR] [-f ARCHIVE] [-l] MEMBER...
@@ -15,7 +15,7 @@
  *   firmextr usr/lib/firmware/rt2870.bin
  * writes it to /usr/lib/firmware/rt2870.bin (or under -C DIR).  The archive is
  * read in place: the kernel serves the module GRUB handed over as
- * /dev/localrepo, and an installed system keeps it as a plain file — see
+ * /dev/firmrepo, and an installed system keeps it as a plain file — see
  * fw_archive_candidates.  Nothing copies it into tmpfs (it is ~500 MB).
  *
  * The zstd streaming API needs both I/O buffers at least ZSTD_DStreamOutSize()
@@ -41,14 +41,14 @@
 #define COPY_BUF        2048
 
 /* Where the archive lives, in order: the module the kernel serves in place
- * first, then the copies an installed system keeps on disk.  /dev/localrepo
+ * first, then the copies an installed system keeps on disk.  /dev/firmrepo
  * publishes the module size (0 = the boot medium carried no module), so a zero
  * size means "not this one" and the next candidate gets its turn. */
 static const char *fw_archive_candidates[] = {
-    "/dev/localrepo",
-    "/localrepo.tar.zst",
-    "/boot/localrepo.tar.zst",
-    "/usr/lib/localrepo.tar.zst",
+    "/dev/firmrepo",
+    "/firmrepo.tar.zst",
+    "/boot/firmrepo.tar.zst",
+    "/usr/lib/firmrepo.tar.zst",
     NULL
 };
 
@@ -98,8 +98,8 @@ typedef struct {
 
 static const char fw_usage[] =
     "usage: firmextr [-C DIR] [-f ARCHIVE] [-l] MEMBER...\n"
-    "  -f FILE  archive to read (default: /dev/localrepo, else a\n"
-    "           localrepo.tar.zst under /, /boot or /usr/lib; '-' = stdin)\n"
+    "  -f FILE  archive to read (default: /dev/firmrepo, else a\n"
+    "           firmrepo.tar.zst under /, /boot or /usr/lib; '-' = stdin)\n"
     "  -C DIR   extract under DIR (default /)\n"
     "  -l       list the members instead of extracting\n";
 
@@ -423,9 +423,9 @@ int cact_ub_firmextr(char **argv, int argc) {
     if (!archive) {
         archive = fw_find_archive();
         if (!archive) {
-            fprintf(stderr, "firmextr: no localrepo archive found (looked at "
-                            "/dev/localrepo, /localrepo.tar.zst, "
-                            "/boot/localrepo.tar.zst, /usr/lib/localrepo.tar.zst)\n");
+            fprintf(stderr, "firmextr: no firmrepo archive found (looked at "
+                            "/dev/firmrepo, /firmrepo.tar.zst, "
+                            "/boot/firmrepo.tar.zst, /usr/lib/firmrepo.tar.zst)\n");
             return 1;
         }
     }

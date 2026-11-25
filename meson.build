@@ -146,7 +146,7 @@ common_lib = static_library('common',
   # compile against the DRM uapi headers.
   c_args: c_args + ['-I' + drmuapi])
 
-# firmextr streams the compressed localrepo archive, so it links the zstd
+# firmextr streams the compressed firmrepo archive, so it links the zstd
 # decompressor vendored in the kernel tree (same sources, -w: third-party code).
 zstd_lib = static_library('cact-zstd-user',
   files(
