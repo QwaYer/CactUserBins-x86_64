@@ -51,12 +51,23 @@ static int zmem_open(void) {
     return fd;
 }
 
-/* Report a refused ioctl.  CactOS's ioctl() hands back the kernel's raw value
- * and does not reliably set errno on this path; the kernel's -1 is also shared
- * by "needs root" and the device-level failures, so the hint names the possible
- * causes instead of quoting an errno that is not there. */
-static int zmem_refused(const char *hint) {
-    fprintf(stderr, "zmemctl: %s\n", hint);
+/* Report a failed ioctl.  CactOS's ioctl() returns the kernel's raw value — the
+ * *negated* errno — and never sets errno (see CactLibc's syscall()), so the code
+ * comes from the return value, not from errno. */
+static int zmem_failed(const char *what, int rc) {
+    int e = rc < 0 ? -rc : rc;
+    const char *msg;
+    switch (e) {
+    case EPERM:  msg = "operation not permitted (root only)"; break;
+    case EINVAL: msg = "invalid argument (bad size, limit or name)"; break;
+    case ENODEV: msg = "no such device"; break;
+    case EBUSY:  msg = "busy (the device is backing swap)"; break;
+    case ENOMEM: msg = "out of memory"; break;
+    default:
+        fprintf(stderr, "zmemctl: %s: failed (error %d)\n", what, e);
+        return 1;
+    }
+    fprintf(stderr, "zmemctl: %s: %s\n", what, msg);
     return 1;
 }
 
@@ -102,7 +113,7 @@ static int zmem_zswap(char **argv, int argc) {
         if (fd < 0) return 1;
         int rc = ioctl(fd, CACT_ZMEM_ZSWAP_SET, &a);   /* enabled = 0 */
         close(fd);
-        if (rc != 0) return zmem_refused("zswap off refused (needs root)");
+        if (rc != 0) return zmem_failed("zswap off", rc);
         printf("zswap off\n");
         return 0;
     }
@@ -137,7 +148,7 @@ static int zmem_zswap(char **argv, int argc) {
     if (fd < 0) return 1;
     int rc = ioctl(fd, CACT_ZMEM_ZSWAP_SET, &a);
     close(fd);
-    if (rc != 0) return zmem_refused("zswap on refused (needs root, or bad limit / out of memory)");
+    if (rc != 0) return zmem_failed("zswap on", rc);
     printf("zswap on (limit %u%%, level %d%s)\n", a.max_pool_pct,
            (int)a.compress_level, a.writeback ? ", writeback" : "");
     return 0;
@@ -159,8 +170,7 @@ static int zmem_zram(char **argv, int argc) {
         if (fd < 0) return 1;
         int rc = ioctl(fd, CACT_ZMEM_ZRAM_DESTROY, argv[i]);
         close(fd);
-        if (rc != 0)
-            return zmem_refused("zram destroy refused (needs root; no such device, or it backs swap)");
+        if (rc != 0) return zmem_failed("zram destroy", rc);
         printf("destroyed %s\n", argv[i]);
         return 0;
     }
@@ -208,7 +218,7 @@ static int zmem_zram(char **argv, int argc) {
     if (fd < 0) return 1;
     int rc = ioctl(fd, CACT_ZMEM_ZRAM_CREATE, &a);
     close(fd);
-    if (rc != 0) return zmem_refused("zram create refused (needs root; bad size, name in use, or out of memory)");
+    if (rc != 0) return zmem_failed("zram create", rc);
     printf("created /dev/%s (%llu MiB)\n", a.name, (unsigned long long)(a.size_bytes >> 20));
     return 0;
 }
