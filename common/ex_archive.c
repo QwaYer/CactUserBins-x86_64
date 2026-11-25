@@ -46,7 +46,9 @@ typedef struct {
 
 static const char tar_usage[] =
     "usage: tar -c|-t|-x [-v] [-f ARCHIVE] [-C DIR] [FILE...]\n"
-    "  -c create, -t list, -x extract.  No -f means stdin/stdout.\n";
+    "  -c create, -t list, -x extract.  No -f means stdin/stdout.\n"
+    "  With -x, FILE... extracts only those members (and a named directory's\n"
+    "  subtree); with a zstd-wrapped archive: zstd -dc A.tar.zst | tar -x - M\n";
 
 static void tar_octal(char *dst, int width, unsigned long long v) {
     snprintf(dst, (size_t)width, "%0*llo", width - 1, v);
@@ -278,7 +280,22 @@ static void tar_mkparents(const char *path) {
     cact_ub_mkdir_p(tmp, 0755);
 }
 
-static int tar_extract(int fd, int verbose) {
+/* -x with FILE... arguments: a member is taken when it matches one of them
+ * exactly, or when one of them names an ancestor directory (with or without a
+ * trailing slash).  No FILE... means the whole archive. */
+static int tar_name_sel(const char *name, char *const *sel, int nsel) {
+    if (nsel <= 0) return 1;
+    for (int i = 0; i < nsel; i++) {
+        size_t l = strlen(sel[i]);
+        if (l == 0) continue;
+        if (strncmp(name, sel[i], l) != 0) continue;
+        if (name[l] == '\0' || name[l] == '/' || sel[i][l - 1] == '/')
+            return 1;
+    }
+    return 0;
+}
+
+static int tar_extract(int fd, int verbose, char *const *sel, int nsel) {
     unsigned char block[TAR_BLOCK];
     int rc = 0;
     for (;;) {
@@ -291,7 +308,16 @@ static int tar_extract(int fd, int verbose) {
         unsigned long long size = tar_parse_octal(h->size, 12);
         char type = h->typeflag;
 
-        if (verbose) printf("%s\n", name);
+        /* With FILE... given, only those members (and the subtree of a
+         * directory named there) are written; everything else is skipped
+         * without touching the filesystem — the only way to pull one subtree
+         * out of an archive without unpacking the rest. */
+        int want = tar_name_sel(name, sel, nsel);
+        if (verbose && want) printf("%s\n", name);
+        if (!want) {
+            if (type != '5' && type != '2') tar_skip_data(fd, size);
+            continue;
+        }
 
         if (type == '5') {
             cact_ub_mkdir_p(name, 0755);
@@ -416,7 +442,8 @@ int cact_ub_tar(char **argv, int argc) {
         fd = open(archive, O_RDONLY, 0);
         if (fd < 0) { fprintf(stderr, "tar: %s: cannot open\n", archive); return 1; }
     }
-    int rc = (mode == 't') ? tar_list(fd, verbose) : tar_extract(fd, verbose);
+    int rc = (mode == 't') ? tar_list(fd, verbose)
+                           : tar_extract(fd, verbose, argv + i, argc - i);
     if (fd != STDIN_FILENO) close(fd);
     return rc;
 }
