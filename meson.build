@@ -96,7 +96,7 @@ apps = [
   'basename', 'dirname', 'realpath', 'which', 'mktemp', 'tty',
   'uname', 'hostname', 'nproc', 'sync', 'env', 'printenv', 'du', 'find',
   'ps', 'lsmod', 'lspci', 'lsusb', 'dmesg', 'sha256sum', 'sha384sum', 'mount', 'umount',
-  'md5sum', 'sha1sum', 'wljoin', 'ced', 'zmemctl', 'swapon', 'swapoff',
+  'md5sum', 'sha1sum', 'wljoin', 'ced', 'zmem', 'swapon', 'swapoff',
   'od', 'hexdump', 'strings', 'base64', 'cmp', 'diff', 'nl', 'rev', 'file',
   'tac', 'shuf', 'split', 'fold', 'paste',
   'test', 'expr', 'factor',
@@ -112,7 +112,7 @@ sbin_apps = [
   'kill', 'su', 'modload', 'modunload', 'ping', 'ip', 'arp', 'fw', 'dd', 'df',
   'fdisk', 'mkfs.ext4', 'mkfs.fat32', 'cact-rootfs',
   'poweroff', 'reboot', 'halt', 'suspend',
-  'mount', 'umount', 'wljoin', 'zmemctl', 'swapon', 'swapoff',
+  'mount', 'umount', 'wljoin', 'zmem', 'swapon', 'swapoff',
 ]
 
 # Tools that link no common/ objects and carry one extra object of their own.

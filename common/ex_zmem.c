@@ -1,10 +1,10 @@
 /*
- * ex_zmem.c — zmemctl: control tool for the compressed-memory backends.
+ * ex_zmem.c — zmem: control tool for the compressed-memory backends.
  *
  * One node, one tool: /dev/zmem takes typed ioctls (CACT_ZMEM_*) that
  * configure and enable in a single atomic call, and /proc/zmem reports what
  * they did.  There are no sysfs text knobs and no separate zram/zswap tools —
- * `zmemctl` drives both, and reads its own state back from /proc/zmem.
+ * `zmem` drives both, and reads its own state back from /proc/zmem.
  *
  *   show                                             print the current state
  *   zswap on [--limit PCT] [--level N] [--writeback]
@@ -35,7 +35,7 @@
 #define ZMEM_DEFAULT_PCT 20u
 
 static const char zmem_usage[] =
-    "usage: zmemctl <command> [args]\n"
+    "usage: zmem <command> [args]\n"
     "Compressed-memory control (/dev/zmem; state in /proc/zmem).\n"
     "  show                                             show current state\n"
     "  zswap on [--limit PCT] [--level N] [--writeback] enable the swap cache\n"
@@ -47,7 +47,7 @@ static const char zmem_usage[] =
 static int zmem_open(void) {
     int fd = open(ZMEM_NODE, O_RDONLY);
     if (fd < 0)
-        fprintf(stderr, "zmemctl: cannot open %s: %s\n", ZMEM_NODE, strerror(errno));
+        fprintf(stderr, "zmem: cannot open %s: %s\n", ZMEM_NODE, strerror(errno));
     return fd;
 }
 
@@ -64,10 +64,10 @@ static int zmem_failed(const char *what, int rc) {
     case EBUSY:  msg = "busy (the device is backing swap)"; break;
     case ENOMEM: msg = "out of memory"; break;
     default:
-        fprintf(stderr, "zmemctl: %s: failed (error %d)\n", what, e);
+        fprintf(stderr, "zmem: %s: failed (error %d)\n", what, e);
         return 1;
     }
-    fprintf(stderr, "zmemctl: %s: %s\n", what, msg);
+    fprintf(stderr, "zmem: %s: %s\n", what, msg);
     return 1;
 }
 
@@ -76,7 +76,7 @@ static int zmem_show(void) {
     size_t len = 0;
     char *buf = cact_ub_read_all(ZMEM_PROC, &len);
     if (!buf) {
-        fprintf(stderr, "zmemctl: cannot read %s: %s\n", ZMEM_PROC, strerror(errno));
+        fprintf(stderr, "zmem: cannot read %s: %s\n", ZMEM_PROC, strerror(errno));
         return 1;
     }
     cact_ub_write_all(STDOUT_FILENO, buf, len);
@@ -101,7 +101,7 @@ static int zmem_pct(const char *s, uint32_t *out) {
 static int zmem_zswap(char **argv, int argc) {
     int i = 2;
     if (i >= argc) {
-        fprintf(stderr, "zmemctl: zswap needs 'on' or 'off'\n");
+        fprintf(stderr, "zmem: zswap needs 'on' or 'off'\n");
         return 1;
     }
 
@@ -118,7 +118,7 @@ static int zmem_zswap(char **argv, int argc) {
         return 0;
     }
     if (strcmp(argv[i], "on") != 0) {
-        fprintf(stderr, "zmemctl: zswap: expected 'on' or 'off', got '%s'\n", argv[i]);
+        fprintf(stderr, "zmem: zswap: expected 'on' or 'off', got '%s'\n", argv[i]);
         return 1;
     }
 
@@ -127,19 +127,19 @@ static int zmem_zswap(char **argv, int argc) {
     for (i++; i < argc; i++) {
         if (strcmp(argv[i], "--limit") == 0) {
             if (++i >= argc || zmem_pct(argv[i], &a.max_pool_pct) != 0) {
-                fprintf(stderr, "zmemctl: --limit needs a percentage (1..100, '25%' or '25')\n");
+                fprintf(stderr, "zmem: --limit needs a percentage (1..100, '25%' or '25')\n");
                 return 1;
             }
         } else if (strcmp(argv[i], "--level") == 0) {
             if (++i >= argc) {
-                fprintf(stderr, "zmemctl: --level needs a number\n");
+                fprintf(stderr, "zmem: --level needs a number\n");
                 return 1;
             }
             a.compress_level = atoi(argv[i]);
         } else if (strcmp(argv[i], "--writeback") == 0) {
             a.writeback = 1;
         } else {
-            fprintf(stderr, "zmemctl: zswap: unexpected argument '%s'\n", argv[i]);
+            fprintf(stderr, "zmem: zswap: unexpected argument '%s'\n", argv[i]);
             return 1;
         }
     }
@@ -157,13 +157,13 @@ static int zmem_zswap(char **argv, int argc) {
 static int zmem_zram(char **argv, int argc) {
     int i = 2;
     if (i >= argc) {
-        fprintf(stderr, "zmemctl: zram needs 'create' or 'destroy'\n");
+        fprintf(stderr, "zmem: zram needs 'create' or 'destroy'\n");
         return 1;
     }
 
     if (strcmp(argv[i], "destroy") == 0) {
         if (++i >= argc) {
-            fprintf(stderr, "zmemctl: zram destroy needs a name\n");
+            fprintf(stderr, "zmem: zram destroy needs a name\n");
             return 1;
         }
         int fd = zmem_open();
@@ -176,17 +176,17 @@ static int zmem_zram(char **argv, int argc) {
     }
 
     if (strcmp(argv[i], "create") != 0) {
-        fprintf(stderr, "zmemctl: zram: expected 'create' or 'destroy', got '%s'\n", argv[i]);
+        fprintf(stderr, "zmem: zram: expected 'create' or 'destroy', got '%s'\n", argv[i]);
         return 1;
     }
 
     if (++i >= argc) {
-        fprintf(stderr, "zmemctl: zram create needs a size (e.g. 512M)\n");
+        fprintf(stderr, "zmem: zram create needs a size (e.g. 512M)\n");
         return 1;
     }
     long size = cact_ub_parse_size(argv[i]);
     if (size <= 0) {
-        fprintf(stderr, "zmemctl: bad size '%s'\n", argv[i]);
+        fprintf(stderr, "zmem: bad size '%s'\n", argv[i]);
         return 1;
     }
 
@@ -197,19 +197,19 @@ static int zmem_zram(char **argv, int argc) {
     for (i++; i < argc; i++) {
         if (strcmp(argv[i], "--name") == 0) {
             if (++i >= argc || strlen(argv[i]) >= sizeof(a.name)) {
-                fprintf(stderr, "zmemctl: --name needs a name of at most %u characters\n",
+                fprintf(stderr, "zmem: --name needs a name of at most %u characters\n",
                         (unsigned)sizeof(a.name) - 1);
                 return 1;
             }
             strcpy(a.name, argv[i]);
         } else if (strcmp(argv[i], "--level") == 0) {
             if (++i >= argc) {
-                fprintf(stderr, "zmemctl: --level needs a number\n");
+                fprintf(stderr, "zmem: --level needs a number\n");
                 return 1;
             }
             a.compress_level = atoi(argv[i]);
         } else {
-            fprintf(stderr, "zmemctl: zram create: unexpected argument '%s'\n", argv[i]);
+            fprintf(stderr, "zmem: zram create: unexpected argument '%s'\n", argv[i]);
             return 1;
         }
     }
@@ -223,7 +223,7 @@ static int zmem_zram(char **argv, int argc) {
     return 0;
 }
 
-int cact_ub_zmemctl(char **argv, int argc) {
+int cact_ub_zmem(char **argv, int argc) {
     if (argc < 2 || strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "help") == 0) {
         write(STDOUT_FILENO, zmem_usage, sizeof(zmem_usage) - 1);
         return argc < 2 ? 2 : 0;
@@ -235,6 +235,6 @@ int cact_ub_zmemctl(char **argv, int argc) {
     if (strcmp(argv[1], "zram") == 0)
         return zmem_zram(argv, argc);
 
-    fprintf(stderr, "zmemctl: unknown command '%s' (try --help)\n", argv[1]);
+    fprintf(stderr, "zmem: unknown command '%s' (try --help)\n", argv[1]);
     return 2;
 }

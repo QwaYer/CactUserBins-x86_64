@@ -2,7 +2,7 @@
  * ex_swap.c — swapon / swapoff: attach and detach a swap backing device.
  *
  * Thin wrappers over /dev/zmem.  swapon hands the kernel a whole-disk name
- * (typically /dev/zram0, which zmemctl created) to page against; swapoff
+ * (typically /dev/zram0, which zmem created) to page against; swapoff
  * releases it.  CactOS does not migrate swapped-out pages back to RAM, so
  * swapoff is refused while any are still out — detach an idle device.  Root
  * only, like mount.
