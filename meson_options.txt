@@ -13,5 +13,5 @@ option('lr_sbin', type: 'string', value: '../LocalRepoCactOS-x86_64/lib/sbin',
 option('drmuapi', type: 'string', value: '../CactKernel-x86_64/Cact/drivers/gpu/drm/uapi',
   description: 'DRM uapi include directory, so ex_sys.c reads the KMS mode for sysinfo against the kernel ABI headers')
 
-option('grub_repo', type: 'string', value: '../grubrepo',
+option('grub_repo', type: 'string', value: '../GrubRepo-for-Cact-x86',
   description: 'grubrepo: menu templates + tools used to generate cact-rootfs\'s grub.cfg, relative or absolute')
