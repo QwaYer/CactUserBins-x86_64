@@ -2,10 +2,10 @@
  * ex_swap.c — swapon / swapoff: attach and detach a swap backing device.
  *
  * Thin wrappers over /dev/zmem.  swapon hands the kernel a whole-disk name
- * (typically /dev/zram0, which zmem created) to page against; swapoff
- * releases it.  CactOS does not migrate swapped-out pages back to RAM, so
- * swapoff is refused while any are still out — detach an idle device.  Root
- * only, like mount.
+ * (typically /dev/zram0, which zmem created) to page against; swapoff faults
+ * the device's swapped-out pages back into RAM and only then releases it, so it
+ * fails with ENOMEM when there is not enough RAM to bring them back — retry
+ * once memory has been freed.  Root only, like mount.
  */
 
 #include "common/ex_util.h"
@@ -41,7 +41,8 @@ static int swap_ctl(const char *prog, const char *dev, uint32_t cmd) {
     int e = rc < 0 ? -rc : rc;
     const char *why = (e == EPERM)  ? "operation not permitted (root only)"
                     : (e == ENODEV) ? "no such device"
-                    : (e == EBUSY)  ? "still has pages swapped out (not migrated back)"
+                    : (e == EBUSY)  ? "another swapoff is already migrating pages"
+                    : (e == ENOMEM) ? "not enough RAM to migrate the pages back"
                     :                 "invalid argument";
     fprintf(stderr, "%s: %s: %s\n", prog, dev, why);
     return 1;
